@@ -21,7 +21,10 @@ type NodeLlamaCppModule = {
     model: string,
     optionsOrDirectory?: string | { directory?: string; cli?: boolean },
   ) => Promise<string>;
-  LlamaChatSession: new (options: { contextSequence: unknown }) => {
+  LlamaChatSession: new (options: {
+    contextSequence: unknown;
+    systemPrompt?: string;
+  }) => {
     prompt: (prompt: string, options?: Record<string, unknown>) => Promise<string>;
   };
   LlamaLogLevel: { error: unknown };
@@ -78,6 +81,7 @@ import { homedir } from "os";
 import { dirname, join } from "path";
 import { accessSync, constants, existsSync, mkdirSync, statSync, unlinkSync, readdirSync, readFileSync, writeFileSync, openSync, readSync, closeSync } from "fs";
 import { createRequire } from "node:module";
+import { resolveQueryExpansionProfile } from "./query-expansion-profile.js";
 
 // =============================================================================
 // Embedding Formatting Functions
@@ -1550,8 +1554,7 @@ export class LlamaCpp implements LLM {
     const session = new LlamaChatSession({ contextSequence: sequence });
 
     const maxTokens = options.maxTokens ?? 150;
-    // Qwen3 recommends temp=0.7, topP=0.8, topK=20 for non-thinking mode
-    // DO NOT use greedy decoding (temp=0) - causes repetition loops
+    // Non-greedy sampling avoids repetition loops in supported generator profiles.
     const temperature = options.temperature ?? 0.7;
 
     let result = "";
@@ -1606,28 +1609,21 @@ export class LlamaCpp implements LLM {
 
     const includeLexical = options.includeLexical ?? true;
     const context = options.context;
+    const profile = resolveQueryExpansionProfile(this.generateModelUri);
+    const prompt = profile.prompt(query);
 
     // The expansion prompt consumes ONLY the query text. Caller intent is
     // free-form meta-language that the expansion model reproduced verbatim as
     // lex/vec sub-queries — degenerate terms that match nothing. Intent still
     // shapes retrieval where it belongs: the reranker query prefix and
     // keyword-based chunk/snippet selection.
-    const prompt = `/no_think Expand this search query: ${query}`;
-
     // Set up inside the try so any failure (grammar creation, context
     // allocation/VRAM, session prompt) falls back to the original query
     // instead of propagating and failing the caller's operation.
     let genContext: Awaited<ReturnType<LlamaModel["createContext"]>> | undefined;
     let sequence: { dispose: () => void | Promise<void> } | undefined;
     try {
-      const grammar = await llama.createGrammar({
-        grammar: `
-        root ::= line+
-        line ::= type ": " content "\\n"
-        type ::= "lex" | "vec" | "hyde"
-        content ::= [^\\n]+
-      `
-      });
+      const grammar = await llama.createGrammar({ grammar: profile.grammar });
 
       // Create a bounded context for expansion to prevent large default VRAM allocations.
       genContext = await this.generateModel!.createContext({
@@ -1635,14 +1631,15 @@ export class LlamaCpp implements LLM {
       });
       sequence = genContext.getSequence();
       const { LlamaChatSession } = await loadNodeLlamaCpp();
-      const session = new LlamaChatSession({ contextSequence: sequence });
+      const session = new LlamaChatSession({
+        contextSequence: sequence,
+        ...(profile.systemPrompt ? { systemPrompt: profile.systemPrompt } : {}),
+      });
 
-      // Qwen3 recommended settings for non-thinking mode:
-      // temp=0.7, topP=0.8, topK=20, presence_penalty for repetition
-      // DO NOT use greedy decoding (temp=0) - causes infinite loops
+      // Non-greedy sampling avoids repetition loops in supported generator profiles.
       const result = await session.prompt(prompt, {
         grammar,
-        maxTokens: 600,
+        maxTokens: profile.maxTokens,
         temperature: 0.7,
         topK: 20,
         topP: 0.8,
@@ -1662,26 +1659,38 @@ export class LlamaCpp implements LLM {
         return queryTerms.some(term => lower.includes(term));
       };
 
-      const queryables: Queryable[] = lines.map(line => {
-        const colonIdx = line.indexOf(":");
-        if (colonIdx === -1) return null;
-        const type = line.slice(0, colonIdx).trim();
-        if (type !== 'lex' && type !== 'vec' && type !== 'hyde') return null;
-        const text = line.slice(colonIdx + 1).trim();
-        if (!hasQueryTerm(text)) return null;
-        return { type: type as QueryType, text };
-      }).filter((q): q is Queryable => q !== null);
+      const seen = new Set<string>();
+      const queryables: Queryable[] = [];
 
-      // Filter out lex entries if not requested
-      const filtered = includeLexical ? queryables : queryables.filter(q => q.type !== 'lex');
-      if (filtered.length > 0) return filtered;
+      for (const line of lines) {
+        const colonIdx = line.indexOf(":");
+        if (colonIdx === -1) continue;
+        const type = line.slice(0, colonIdx).trim();
+        if (type !== "lex" && type !== "vec" && type !== "hyde") continue;
+        const text = line.slice(colonIdx + 1).trim();
+        if (!text || !hasQueryTerm(text)) continue;
+        const key = `${type}\u0000${text}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        queryables.push({ type, text });
+      }
+
+      const complete = (["lex", "vec", "hyde"] as const)
+        .every((type) => queryables.some((item) => item.type === type));
+
+      if (complete) {
+        const filtered = includeLexical
+          ? queryables
+          : queryables.filter((item) => item.type !== "lex");
+        if (filtered.length > 0) return filtered;
+      }
 
       const fallback: Queryable[] = [
-        { type: 'hyde', text: `Information about ${query}` },
-        { type: 'lex', text: query },
-        { type: 'vec', text: query },
+        { type: "hyde", text: `Information about ${query}` },
+        { type: "lex", text: query },
+        { type: "vec", text: query },
       ];
-      return includeLexical ? fallback : fallback.filter(q => q.type !== 'lex');
+      return includeLexical ? fallback : fallback.filter((item) => item.type !== "lex");
     } catch (error) {
       console.error("Structured query expansion failed:", error);
       // Fallback to original query
