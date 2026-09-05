@@ -63,7 +63,11 @@ The built-in Granite profile uses the checkpoint's documented system instruction
 
 Content remains limited to a single line per expansion. QMD's existing parsing, query-term preservation filter, cache, fallback, retrieval, fusion, and reranking behavior remains in place.
 
-The profile selector is based on the configured generator URI. The fork recognizes its Granite default explicitly. Existing Qwen behavior may remain as a compatibility profile for users who deliberately configure a Qwen URI, but no Qwen URI is a default and no Qwen model is downloaded implicitly. Unknown custom generators use a documented generic profile or produce a clear configuration error; they must not be silently treated as Qwen.
+The profile selector is based on a normalized, case-insensitive configured generator URI. It selects the Granite profile when the URI or local filename contains `qmd-query-expansion-granite-2b`, the legacy Qwen profile when it contains `qwen`, and the generic profile otherwise. URI normalization is limited to lowercasing and extracting the repository/path and basename; it does not resolve the network resource.
+
+Existing Qwen behavior remains as a compatibility profile for users who deliberately configure a Qwen URI, but no Qwen URI is a default and no Qwen model is downloaded implicitly. Unknown custom generators always use the documented generic profile; they do not produce a configuration error and are never silently treated as Qwen. The generic profile uses the same neutral system instruction, bounded six-line grammar, and token limit as Granite, without model-family-specific tokens such as `/no_think`.
+
+The grammar fixes raw output order as one `hyde:`, two `lex:`, then three `vec:` lines. Existing query-term preservation parsing may discard a generated line, so the parsed result can contain fewer than six entries. A valid parsed result must retain at least one entry of each type and never more than six entries; otherwise QMD uses its existing original-query fallback.
 
 ### Failure behavior
 
@@ -133,7 +137,8 @@ The README will document:
 - Verify configuration and environment variables still override defaults with existing precedence.
 - Verify the Granite profile supplies its system prompt and does not include `/no_think`.
 - Verify the Granite grammar permits exactly one HyDE, two lexical, and three vector lines.
-- Verify unknown generator behavior is documented and deterministic.
+- Verify URI normalization and selection of Granite, explicit Qwen, and generic profiles.
+- Verify unknown generators receive the bounded generic profile.
 - Verify generation failure returns the original-query fallback without resolving another model.
 - Run upstream unit tests under both Node and Bun where upstream already requires both.
 - Run type checking and packaged-install smoke tests.
@@ -150,7 +155,11 @@ Networked model tests run under Node and are excluded from ordinary unit tests. 
 - An exact code identifier
 - An ambiguous query with intent
 
-Expansion must terminate promptly, remain bounded, preserve important query terms, and return useful typed lines. Reranking tests use realistic distractors and record rank plus score margins. A successful GGUF load alone is not a passing result.
+After one unmeasured warm-up query, each expansion fixture has a 30-second timeout. Its raw output must match the fixed six-line grammar with no duplicate lines. Its parsed result must contain between three and six entries, include at least one entry of each type, contain no duplicate `(type, text)` pair, and retain at least one fixture-defined anchor term in a lexical or vector entry. Lexical entries may contain at most 120 characters, vector entries at most 240 characters, and the HyDE entry at most 400 characters. At least six of the seven fixtures must pass all content gates; timeout, malformed output, or fallback is a fixture failure.
+
+The ambiguous-query fixture supplies an intent and validates the complete search path rather than requiring the expansion model itself to reproduce intent text. Its expected document must rank in the top two.
+
+Reranking smoke tests contain seven query sets with one expected document and at least four realistic distractors. Scores must be finite numbers in `[0, 1]`; the expected document must rank first in at least six sets and may not rank below second in any set. Results record ranks and score margins for later comparison. A successful GGUF load alone is not a passing result.
 
 ### Download-policy verification
 
@@ -187,7 +196,7 @@ The fork does not weaken QMD's trust gates for remote or project-local model URI
 - A clean GitHub installation exposes a working `qmd` CLI.
 - Fresh default configuration resolves only the three approved model URIs.
 - Plain `qmd query` invokes automatic Granite expansion and the full deep pipeline.
-- Expansion is bounded to one HyDE, two lexical, and three vector lines.
+- Raw expansion is bounded and ordered as one HyDE, two lexical, and three vector lines; parsed output retains at least one of each type or falls back safely.
 - The IBM Granite reranker runs through QMD's existing ranking API.
 - `pi-memory` deep search works without changes to `pi-memory`.
 - No failure path silently downloads or selects Qwen.
