@@ -1604,9 +1604,6 @@ export class LlamaCpp implements LLM {
     // Ping activity at start to keep models alive during this operation
     this.touchActivity();
 
-    const llama = await this.ensureLlama();
-    await this.ensureGenerateModel();
-
     const includeLexical = options.includeLexical ?? true;
     const context = options.context;
     const profile = resolveQueryExpansionProfile(this.generateModelUri);
@@ -1623,6 +1620,8 @@ export class LlamaCpp implements LLM {
     let genContext: Awaited<ReturnType<LlamaModel["createContext"]>> | undefined;
     let sequence: { dispose: () => void | Promise<void> } | undefined;
     try {
+      const llama = await this.ensureLlama();
+      await this.ensureGenerateModel();
       const grammar = await llama.createGrammar({ grammar: profile.grammar });
 
       // Create a bounded context for expansion to prevent large default VRAM allocations.
@@ -1675,8 +1674,9 @@ export class LlamaCpp implements LLM {
         queryables.push({ type, text });
       }
 
-      const complete = (["lex", "vec", "hyde"] as const)
-        .every((type) => queryables.some((item) => item.type === type));
+      const complete = queryables.length <= 6
+        && (["lex", "vec", "hyde"] as const)
+          .every((type) => queryables.some((item) => item.type === type));
 
       if (complete) {
         const filtered = includeLexical
