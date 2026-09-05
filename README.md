@@ -25,17 +25,92 @@ Typed expansions are routed exclusively: `lex` → BM25/FTS, `vec` and `hyde` �
 
 You can read more about QMD's progress in the [CHANGELOG](CHANGELOG.md).
 
+## sendhil/qmd fork
+
+This branch preserves QMD's complete local deep-search pipeline while using
+Google EmbeddingGemma, an IBM Granite-based query expander, and a Jina reranker
+by default. A fresh installation does not download Qwen or another
+Chinese-developed model unless you explicitly override a model URI.
+
+Install the current GitHub branch directly while the first release is being
+prepared:
+
+```sh
+npm install -g github:sendhil/qmd#non-chinese-defaults
+```
+
+After the immutable tag has been published, pin installations to it instead:
+
+```sh
+npm install -g github:sendhil/qmd#non-chinese-v2.8.3.1
+```
+
+The `non-chinese-v2.8.3.1` tag is planned; this README does not claim it has
+already been published. Embedding downloads EmbeddingGemma; the first deep
+query also downloads the expander and reranker. QMD stores these GGUF files in
+its normal local model cache, `~/.cache/qmd/models/`:
+
+| Default | Role | Approximate download |
+|---------|------|----------------------|
+| Google EmbeddingGemma 300M Q8 | Embeddings | 318 MB |
+| IBM Granite-based QMD expander Q4_K_M | Query expansion | 1.4 GB |
+| Jina reranker v1 turbo English F16 | Reranking | 73 MB |
+
+The query-expansion checkpoint uses an IBM base model, but part of its label
+dataset has incomplete generator provenance. See the model-policy discussion
+in [`docs/UPSTREAM_MAINTENANCE.md`](docs/UPSTREAM_MAINTENANCE.md) before
+adopting it under a stricter policy.
+
+Verify the executable and exercise the full standalone pipeline after adding
+and embedding a collection:
+
+```sh
+qmd --version
+qmd status
+qmd query "a phrase known to be in the collection"
+```
+
+To remove this first pre-release installation without installing upstream's
+different defaults:
+
+```sh
+npm uninstall -g @tobilu/qmd
+command -v qmd || true
+```
+
+This removes the package but does not delete model caches or indexes. After
+later immutable releases exist, roll back by installing the preceding
+`non-chinese-v*` tag.
+
+### Pi memory
+
+Install the fork first so `pi-memory` discovers this `qmd` executable:
+
+```sh
+npm install -g github:sendhil/qmd#non-chinese-defaults
+pi install npm:pi-memory
+```
+
+Once the planned immutable tag is published, use
+`github:sendhil/qmd#non-chinese-v2.8.3.1` in the first command. `pi-memory`
+creates its `pi-memory` collection automatically. If QMD was installed after
+Pi started, restart Pi or initialize manually:
+
+```sh
+qmd collection add ~/.pi/agent/memory --name pi-memory
+qmd context add /daily "Daily append-only work logs organized by date" -c pi-memory
+qmd context add / "Curated long-term memory: decisions, preferences, facts, lessons" -c pi-memory
+qmd embed
+```
+
+In Pi, run `memory_status`, then test `memory_search` using `deep` mode. Remove
+or disable another memory extension that registers the same tool name.
+
 ## Quick Start
 
 ```sh
-# Install globally (Node or Bun)
-npm install -g @tobilu/qmd
-# or
-bun install -g @tobilu/qmd
-
-# Or run directly
-npx @tobilu/qmd ...
-bunx @tobilu/qmd ...
+# Install this fork from GitHub; pin the immutable tag after it is published
+npm install -g github:sendhil/qmd#non-chinese-defaults
 
 # Create collections for your notes, docs, and meeting transcripts
 qmd collection add ~/notes --name notes
@@ -491,8 +566,8 @@ The SDK requires explicit `dbPath` — no defaults are assumed. This makes it sa
                                       ▼
                           ┌───────────────────────┐
                           │    LLM Re-ranking     │
-                          │  (qwen3-reranker)     │
-                          │  Yes/No + logprobs    │
+                          │   (jina-reranker)     │
+                          │  Cross-encoder score  │
                           └───────────┬───────────┘
                                       │
                                       ▼
@@ -512,18 +587,18 @@ The SDK requires explicit `dbPath` — no defaults are assumed. This makes it sa
 |---------|-----------|------------|-------|
 | **FTS (BM25)** | SQLite FTS5 BM25 | `Math.abs(score)` | 0 to ~25+ |
 | **Vector** | Cosine distance | `1 / (1 + distance)` | 0.0 to 1.0 |
-| **Reranker** | LLM 0-10 rating | `score / 10` | 0.0 to 1.0 |
+| **Reranker** | Cross-encoder relevance | Already normalized | 0.0 to 1.0 |
 
 ### Fusion Strategy
 
 The `query` command uses **Reciprocal Rank Fusion (RRF)** with position-aware blending:
 
-1. **Query Expansion**: Original query (×2 for weighting) + 1 LLM variation
+1. **Query Expansion**: Original query (×2 for weighting) + typed LLM variations
 2. **Parallel Retrieval**: Each query searches both FTS and vector indexes
 3. **RRF Fusion**: Combine all result lists using `score = Σ(1/(k+rank+1))` where k=60
 4. **Top-Rank Bonus**: Documents ranking #1 in any list get +0.05, #2-3 get +0.02
 5. **Top-K Selection**: Take top 30 candidates for reranking
-6. **Re-ranking**: LLM scores each document (yes/no with logprobs confidence)
+6. **Re-ranking**: A cross-encoder scores each candidate for relevance
 7. **Position-Aware Blending**:
    - RRF rank 1-3: 75% retrieval, 25% reranker (preserves exact matches)
    - RRF rank 4-10: 60% retrieval, 40% reranker
@@ -557,9 +632,9 @@ QMD uses three local GGUF models (auto-downloaded on first use):
 
 | Model | Purpose | Size |
 |-------|---------|------|
-| `embeddinggemma-300M-Q8_0` | Vector embeddings (default) | ~300MB |
-| `qwen3-reranker-0.6b-q8_0` | Re-ranking | ~640MB |
-| `qmd-query-expansion-1.7B-q4_k_m` | Query expansion (fine-tuned) | ~1.1GB |
+| `embeddinggemma-300M-Q8_0` | Vector embeddings (default) | ~318 MB |
+| `Jina-Bert-Implementation-38M-F16` | Re-ranking | ~73 MB |
+| `qmd-query-expansion-granite-2b-grpo-q4_k_m` | Query expansion (fine-tuned) | ~1.4 GB |
 
 Models are downloaded from HuggingFace and cached in `~/.cache/qmd/models/`.
 
@@ -727,8 +802,8 @@ editor_uri: "vscode://file{path}:{line}:{col}"
 # resolved defaults. See "Model Configuration" for the default URIs.
 models:
   embed: "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf"
-  rerank: "hf:ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF/qwen3-reranker-0.6b-q8_0.gguf"
-  generate: "hf:tobil/qmd-query-expansion-1.7B-gguf/qmd-query-expansion-1.7B-q4_k_m.gguf"
+  rerank: "hf:ggml-org/jina-reranker-v1-turbo-en-GGUF/Jina-Bert-Implementation-38M-F16.gguf"
+  generate: "hf:nichenke/qmd-query-expansion-granite-2b-grpo-gguf/qmd-query-expansion-granite-2b-grpo-q4_k_m.gguf"
 
 # One entry per collection. The key is the collection name.
 collections:
@@ -1252,7 +1327,7 @@ Query ──► LLM Expansion ──► [Original, Variant 1, Variant 2]
                 │
                 ▼
          LLM Re-ranking
-         (yes/no + logprob confidence)
+         (cross-encoder relevance score)
                 │
                 ▼
          Position-Aware Blend
@@ -1266,19 +1341,31 @@ Query ──► LLM Expansion ──► [Original, Variant 1, Variant 2]
 
 ## Model Configuration
 
-The default models are defined in `src/llm.ts` as HuggingFace URIs:
+The default models are defined in `src/llm.ts` as Hugging Face URIs:
 
 ```typescript
 const DEFAULT_EMBED_MODEL = "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf";
-const DEFAULT_RERANK_MODEL = "hf:ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF/qwen3-reranker-0.6b-q8_0.gguf";
-const DEFAULT_GENERATE_MODEL = "hf:tobil/qmd-query-expansion-1.7B-gguf/qmd-query-expansion-1.7B-q4_k_m.gguf";
+const DEFAULT_RERANK_MODEL = "hf:ggml-org/jina-reranker-v1-turbo-en-GGUF/Jina-Bert-Implementation-38M-F16.gguf";
+const DEFAULT_GENERATE_MODEL = "hf:nichenke/qmd-query-expansion-granite-2b-grpo-gguf/qmd-query-expansion-granite-2b-grpo-q4_k_m.gguf";
 ```
 
-Override them per-role without touching source via the `models:` block in
-`index.yml` (see [Configuring `index.yml`](#configuring-indexyml)) or the
-`QMD_EMBED_MODEL` env var. Re-run `qmd embed` after changing the embedding model.
+Override any role without changing source through the `models:` block in
+`index.yml` (see [Configuring `index.yml`](#configuring-indexyml)) or with
+`QMD_EMBED_MODEL`, `QMD_GENERATE_MODEL`, and `QMD_RERANK_MODEL`. Explicit
+configuration keeps precedence over fork defaults. Re-run `qmd embed` after
+changing the embedding model.
 
-### EmbeddingGemma Prompt Format
+Custom URIs are an explicit opt-in and may select models outside this fork's
+lineage policy. A project-local `.qmd/index.yml` containing custom model URIs
+is protected by QMD's trust gate: review it interactively with `qmd trust`
+rather than setting `QMD_TRUST_LOCAL_CONFIG=1` unless unattended loading is
+intentional.
+
+All standalone collection, CLI, SDK, and MCP workflows elsewhere in this
+README behave as documented; only the built-in model choices and expansion
+profile selection differ in this fork.
+
+### EmbeddingGemma prompt format
 
 ```
 // For queries
@@ -1288,13 +1375,19 @@ Override them per-role without touching source via the `models:` block in
 "title: {title} | text: {content}"
 ```
 
-### Qwen3-Reranker
+### Jina reranker
 
-Uses node-llama-cpp's `createRankingContext()` and `rankAndSort()` API for cross-encoder reranking. Returns documents sorted by relevance score (0.0 - 1.0).
+Uses node-llama-cpp's `createRankingContext()` and `rankAndSort()` APIs for
+cross-encoder reranking. It returns documents sorted by a relevance score from
+0.0 through 1.0.
 
-### Qwen3 (Query Expansion)
+### Query expansion profiles
 
-Used for generating query variations via `LlamaChatSession`.
+The default Granite QMD expander receives a neutral system prompt and a bounded
+grammar that emits one `hyde:`, two `lex:`, and three `vec:` lines. Unknown
+custom generator URIs receive the same bounded generic profile. An explicitly
+configured URI containing `qwen` receives QMD's legacy Qwen compatibility
+prompt and grammar; QMD never selects or downloads it as a silent fallback.
 
 ## License
 

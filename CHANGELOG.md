@@ -5,6 +5,15 @@
 ### Added
 
 - Added Oxlint lint fence.
+- Added an opt-in Node-based real-model smoke test and an agent-facing
+  upstream-maintenance runbook for the `non-chinese-defaults` branch.
+
+### Changed
+
+- Fork defaults now use Google's EmbeddingGemma, an IBM Granite-based query
+  expander, and Jina's English reranker, avoiding Chinese-developed model
+  weights on a fresh installation. Query expansion selects a model-aware
+  prompt and grammar profile while preserving explicit custom-model overrides.
 
 ## [2.8.3] - 2026-08-16
 
