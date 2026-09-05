@@ -20,7 +20,7 @@ The fork changes only model policy, query-expansion model adaptation, tests, and
 
 For the initial fork, "non-Chinese model" means that deployed weights must not descend from a model developed by a Chinese organization. This excludes Qwen, DeepSeek, BGE/BAAI, GTE/Alibaba, MiniCPM, GLM, Yi, InternLM, and their derivatives, merges, distillations, and post-trained variants.
 
-Multilingual support, including support for Chinese text, does not by itself violate this policy. The initial fork accepts partially opaque label-dataset provenance for the community QMD expansion checkpoint, and documents that limitation. Strictly audited training-data provenance and retraining are outside the initial scope.
+Multilingual support, including support for Chinese text, does not by itself violate this policy. The initial fork accepts partially opaque label-dataset provenance for the community QMD expansion checkpoint, and documents that limitation. It also accepts Jina's documented knowledge-distillation lineage even though the Jina base reranker teacher checkpoint is not public, so the complete teacher-weight provenance cannot be independently audited. Both exceptions are accepted under the user's practical-lineage policy; strictly audited training-data provenance and retraining are outside the initial scope.
 
 Before changing a default model, maintenance must review its developer, base-weight ancestry, adapters or merges, distillation lineage, training-label provenance when available, license, GGUF conversion provenance, and behavior through QMD's exact `node-llama-cpp` APIs.
 
@@ -30,9 +30,17 @@ Before changing a default model, maintenance must review its developer, base-wei
 | --- | --- | --- |
 | Embedding | `hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf` | Existing Google DeepMind default; no change required. |
 | Expansion | `hf:nichenke/qmd-query-expansion-granite-2b-grpo-gguf/qmd-query-expansion-granite-2b-grpo-q4_k_m.gguf` | QMD-specific `lex:/vec:/hyde:` checkpoint based on IBM Granite 3.3 2B. |
-| Reranking | `hf:keisuke-miyako/granite-embedding-reranker-english-r2-gguf-q8_0/granite-embedding-reranker-english-r2-Q8_0.gguf` | Quantization of IBM's Apache-2.0 149M ModernBERT cross-encoder; verified with QMD's ranking API. |
+| Reranking | `hf:ggml-org/jina-reranker-v1-turbo-en-GGUF/Jina-Bert-Implementation-38M-F16.gguf` | Official ggml-org conversion of Jina AI's Apache-2.0 English JinaBERT cross-encoder; EU-developed, 37.8M parameters, and verified through QMD's exact ranking API. |
 
-Approximate model downloads are 1.55 GB for the expansion model and 161 MB for the reranker, plus the existing EmbeddingGemma model. Model binaries remain in QMD's normal cache and are never committed to Git.
+Approximate model downloads are 1.55 GB for the expansion model and 77 MB for the reranker, plus the existing EmbeddingGemma model. Model binaries remain in QMD's normal cache and are never committed to Git.
+
+### Reranker candidate decision
+
+The originally proposed IBM Granite R2 GGUF, `hf:keisuke-miyako/granite-embedding-reranker-english-r2-gguf-q8_0/granite-embedding-reranker-english-r2-Q8_0.gguf`, loaded successfully but failed the approved relevance gate: expected-document ranks were `[1, 5, 5, 2, 1, 2, 5]`, only two of seven cases ranked first, and three fell below second. Testing the exact ModernBERT pair-token template did not improve the top-one count, so the issue was not resolved by separator formatting.
+
+The corrected Mixedbread candidate, `hf:cstr/mxbai-rerank-base-v1-GGUF/mxbai-rerank-base-v1-q8_0.gguf`, was also rejected. Its 198.82 MB GGUF downloaded, but QMD's pinned `node-llama-cpp` runtime refused to load it because the file does not define the required BERT token-type count. Direct reranking and full search both failed before scoring.
+
+The selected Jina artifact is 76,971,168 bytes and uses the `jina-bert-v2` architecture with a context length of 8,192. It is the [official ggml-org conversion](https://huggingface.co/ggml-org/jina-reranker-v1-turbo-en-GGUF) of an Apache-2.0 English model from EU-based Jina AI. With expected input positions rotated to prevent order-based false positives, its seven expected-document ranks were `[1, 1, 1, 1, 1, 1, 2]`; QMD reported the exact configured model for every case and all scores were finite in `[0, 1]`. The full intent-aware search ranked the expected web-performance document first in 21.98 seconds. [Jina's published model card](https://huggingface.co/jinaai/jina-reranker-v1-turbo-en) reports BEIR NDCG@10 of 49.60 and a LlamaIndex RAG hit rate of 85.13. The model is knowledge-distilled from Jina's base reranker; that teacher checkpoint is not public, and the user explicitly accepts that limitation under the practical-lineage policy.
 
 ## Architecture
 
@@ -159,7 +167,7 @@ After one unmeasured warm-up query, each expansion fixture has a 30-second timeo
 
 The ambiguous-query fixture supplies an intent and validates the complete search path rather than requiring the expansion model itself to reproduce intent text. Its expected document must rank in the top two.
 
-Reranking smoke tests contain seven query sets with one expected document and at least four realistic distractors. Scores must be finite numbers in `[0, 1]`; the expected document must rank first in at least six sets and may not rank below second in any set. Results record ranks and score margins for later comparison. A successful GGUF load alone is not a passing result.
+Reranking smoke tests contain seven query sets with one expected document and at least four realistic distractors. The expected document rotates across input positions, and each result must identify the exact configured reranker so fallback output cannot pass by preserving input order. Scores must be finite numbers in `[0, 1]`; the expected document must rank first in at least six sets and may not rank below second in any set. Results record ranks and score margins for later comparison. A successful GGUF load alone is not a passing result.
 
 ### Download-policy verification
 
@@ -197,7 +205,7 @@ The fork does not weaken QMD's trust gates for remote or project-local model URI
 - Fresh default configuration resolves only the three approved model URIs.
 - Plain `qmd query` invokes automatic Granite expansion and the full deep pipeline.
 - Raw expansion is bounded and ordered as one HyDE, two lexical, and three vector lines; parsed output retains at least one of each type or falls back safely.
-- The IBM Granite reranker runs through QMD's existing ranking API.
+- The selected Jina reranker runs through QMD's existing ranking API and passes the approved relevance thresholds.
 - `pi-memory` deep search works without changes to `pi-memory`.
 - No failure path silently downloads or selects Qwen.
 - Upstream tests and fork-specific deterministic tests pass.

@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make `sendhil/qmd` work out of the box with Google/IBM model defaults while preserving automatic deep search, custom model overrides, `pi-memory` compatibility, and a low-friction upstream update workflow.
+**Goal:** Make `sendhil/qmd` work out of the box with approved Google, IBM Granite, and Jina model defaults while preserving automatic deep search, custom model overrides, `pi-memory` compatibility, and a low-friction upstream update workflow.
 
 **Architecture:** Keep upstream QMD intact except for a focused model-policy layer. Move query-expansion prompt/grammar selection into a small profile module, use an IBM Granite profile by default, retain explicit Qwen compatibility, and give unknown custom generators a bounded generic profile. Add deterministic unit tests plus an opt-in Node-only real-model smoke harness, then document direct GitHub installation and upstream maintenance.
 
@@ -17,7 +17,7 @@
 - Create `test/query-expansion-profile.test.ts`: deterministic profile-selection tests that never load a model.
 - Modify `src/llm.ts`: approved default URIs, expanded chat-session type, profile use, parsed-output validation, deduplication, and safe fallback.
 - Create `test/query-expansion-runtime.test.ts`: isolated mock-based coverage of prompt wiring, bounded output, filtering, and fallback behavior.
-- Create `scripts/smoke-non-chinese-models.ts`: opt-in Node-based checks against the real Granite expansion and reranking GGUFs.
+- Create `scripts/smoke-non-chinese-models.ts`: opt-in Node-based checks against the real Granite expansion and Jina reranking GGUFs.
 - Create `test/fixtures/non-chinese-model-smoke.ts`: queries, anchors, expected documents, and distractors for the smoke harness.
 - Modify `package.json`: expose the opt-in smoke command.
 - Create `AGENTS.md`: concise fork invariants and automatic routing to the detailed maintenance runbook.
@@ -53,7 +53,7 @@ describe("fork default model policy", () => {
     DEFAULT_RERANK_MODEL_URI,
   ];
 
-  test("uses the approved Google and IBM model artifacts", () => {
+  test("uses the approved Google, IBM, and Jina model artifacts", () => {
     expect(DEFAULT_EMBED_MODEL_URI).toBe(
       "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf",
     );
@@ -61,7 +61,7 @@ describe("fork default model policy", () => {
       "hf:nichenke/qmd-query-expansion-granite-2b-grpo-gguf/qmd-query-expansion-granite-2b-grpo-q4_k_m.gguf",
     );
     expect(DEFAULT_RERANK_MODEL_URI).toBe(
-      "hf:keisuke-miyako/granite-embedding-reranker-english-r2-gguf-q8_0/granite-embedding-reranker-english-r2-Q8_0.gguf",
+      "hf:ggml-org/jina-reranker-v1-turbo-en-GGUF/Jina-Bert-Implementation-38M-F16.gguf",
     );
   });
 
@@ -103,7 +103,7 @@ Replace the model constants in `src/llm.ts` with:
 const DEFAULT_EMBED_MODEL =
   "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf";
 const DEFAULT_RERANK_MODEL =
-  "hf:keisuke-miyako/granite-embedding-reranker-english-r2-gguf-q8_0/granite-embedding-reranker-english-r2-Q8_0.gguf";
+  "hf:ggml-org/jina-reranker-v1-turbo-en-GGUF/Jina-Bert-Implementation-38M-F16.gguf";
 const DEFAULT_GENERATE_MODEL =
   "hf:nichenke/qmd-query-expansion-granite-2b-grpo-gguf/qmd-query-expansion-granite-2b-grpo-q4_k_m.gguf";
 ```
@@ -150,7 +150,7 @@ Expected: PASS. Existing configuration and environment-variable precedence tests
 
 ```sh
 git add src/llm.ts test/llm.test.ts
-git commit -m "feat: use Google and IBM model defaults"
+git commit -m "feat: use approved model defaults"
 ```
 
 ### Task 3: Add query-expansion profiles using TDD
@@ -621,7 +621,17 @@ git commit -m "feat: apply model-specific expansion profiles"
 - Modify: `package.json`
 - Modify: `test/package.test.ts`
 
-- [ ] **Step 1: Write the failing package-script assertion**
+**Approved execution amendment (2026-09-05):** The user explicitly approved replacing the proposed IBM reranker with `hf:ggml-org/jina-reranker-v1-turbo-en-GGUF/Jina-Bert-Implementation-38M-F16.gguf` after candidate testing. This [official ggml-org conversion](https://huggingface.co/ggml-org/jina-reranker-v1-turbo-en-GGUF) is a 76,971,168-byte Apache-2.0 English JinaBERT model from EU-based Jina AI. Jina documents knowledge distillation from its base reranker, but the teacher checkpoint is not public; the user accepts that incomplete teacher-weight provenance under the practical-lineage policy. [Jina's model card](https://huggingface.co/jinaai/jina-reranker-v1-turbo-en) reports BEIR NDCG@10 of 49.60 and a LlamaIndex RAG hit rate of 85.13.
+
+The originally proposed IBM Granite R2 GGUF, `hf:keisuke-miyako/granite-embedding-reranker-english-r2-gguf-q8_0/granite-embedding-reranker-english-r2-Q8_0.gguf`, was rejected after expected-document ranks `[1, 5, 5, 2, 1, 2, 5]` produced only two top-one results and three results below second. The corrected 198.82 MB Mixedbread GGUF, `hf:cstr/mxbai-rerank-base-v1-GGUF/mxbai-rerank-base-v1-q8_0.gguf`, was also rejected because QMD's pinned runtime reported `bert model needs to define token type count` and could not load it for direct reranking or full search.
+
+The implemented harness supersedes the original draft below in four safety-critical ways: it passes all three default URIs explicitly, verifies that reranking reports the exact configured model, rotates the expected document across input positions, and never abandons an active inference promise before disposal. Expansion deadlines abort the real chat session through `AbortSignal`; full search records completed elapsed time rather than racing cleanup; nested cleanup always attempts temp-directory removal even if store closure fails. The ordinary deterministic runner explicitly excludes this networked gate.
+
+Final unchanged-threshold evidence: expansion passed 7/7 in 0.98–1.26 seconds per fixture; the selected Jina reranker produced ranks `[1, 1, 1, 1, 1, 1, 2]`, passed 6/7 top-one and 7/7 top-two, returned the exact model URI for every fixture, and emitted only finite `[0, 1]` scores. The intent-aware full search ranked the expected document first in 21.98 seconds. Commits `5b3f8ca`, `7d610ea`, and `6eef4b5` record the initial harness, approved Jina default, and safety hardening respectively.
+
+The code sample retained below is the pre-execution draft and is not authoritative where it differs from the completed harness. Consult `scripts/smoke-non-chinese-models.ts` for the reviewed implementation.
+
+- [x] **Step 1: Write the failing package-script assertion**
 
 Add to the `package test task` block in `test/package.test.ts`:
 
@@ -633,7 +643,7 @@ test("exposes an opt-in non-Chinese model smoke test", () => {
 });
 ```
 
-- [ ] **Step 2: Run the assertion and verify it fails**
+- [x] **Step 2: Run the assertion and verify it fails**
 
 Run:
 
@@ -643,7 +653,7 @@ node ./node_modules/vitest/vitest.mjs run test/package.test.ts --reporter=verbos
 
 Expected: FAIL because `smoke:non-chinese-models` is absent.
 
-- [ ] **Step 3: Create the typed fixture file**
+- [x] **Step 3: Create the typed fixture file**
 
 Create `test/fixtures/non-chinese-model-smoke.ts` exporting seven expansion cases and seven rerank cases. Give the arrays explicit element types so optional `context` is safe to access:
 
@@ -748,7 +758,7 @@ export const rerankCases: readonly RerankSmokeCase[] = [
 ] as const;
 ```
 
-- [ ] **Step 4: Implement the Node-only smoke harness**
+- [x] **Step 4: Implement the Node-only smoke harness**
 
 Create `scripts/smoke-non-chinese-models.ts` with these gates:
 
@@ -978,7 +988,7 @@ async function main(): Promise<void> {
 await main();
 ```
 
-- [ ] **Step 5: Add the opt-in package script**
+- [x] **Step 5: Add the opt-in package script**
 
 Add to `package.json` scripts:
 
@@ -986,9 +996,9 @@ Add to `package.json` scripts:
 "smoke:non-chinese-models": "tsx scripts/smoke-non-chinese-models.ts"
 ```
 
-This command must not be included in `npm test` because it downloads approximately 1.7 GB and depends on local inference hardware.
+This command must not be included in `npm test` because a fresh cache downloads approximately 1.9 GB and depends on local inference hardware.
 
-- [ ] **Step 6: Run deterministic package tests**
+- [x] **Step 6: Run deterministic package tests**
 
 Run:
 
@@ -999,7 +1009,7 @@ npm run test:types
 
 Expected: PASS without downloading models.
 
-- [ ] **Step 7: Run the real-model smoke harness under Node**
+- [x] **Step 7: Run the real-model smoke harness under Node**
 
 Run:
 
@@ -1009,7 +1019,7 @@ GGML_METAL_NO_RESIDENCY=1 npm run smoke:non-chinese-models
 
 Expected: at least 6/7 expansion fixtures pass; all expected rerank documents rank in the top two and at least 6/7 rank first; process exits 0. Do not substitute Bun for this release gate.
 
-- [ ] **Step 8: Commit the smoke harness**
+- [x] **Step 8: Commit the smoke harness**
 
 ```sh
 git add package.json test/package.test.ts test/fixtures/non-chinese-model-smoke.ts scripts/smoke-non-chinese-models.ts
@@ -1182,7 +1192,7 @@ Add a concise fork section before `## Quick Start` containing:
 ## sendhil/qmd fork
 
 This branch preserves QMD's complete local deep-search pipeline while using
-Google and IBM models by default. It does not download Qwen or another
+Google, IBM Granite, and Jina models by default. It does not download Qwen or another
 Chinese-developed model unless you explicitly override a model URI.
 
 Install an immutable fork release:
@@ -1192,8 +1202,8 @@ npm install -g github:sendhil/qmd#non-chinese-v2.8.3.1
 ```
 
 The first semantic/deep operation downloads EmbeddingGemma, the IBM
-Granite-based QMD query expander (about 1.55 GB), and IBM Granite R2 reranker
-(about 161 MB). Models stay in QMD's normal local cache.
+Granite-based QMD query expander (about 1.55 GB), and the Jina English reranker
+(about 77 MB). Models stay in QMD's normal local cache.
 
 The query-expansion checkpoint uses an IBM base model, but part of its label
 dataset has incomplete generator provenance. See the model-policy discussion
@@ -1234,7 +1244,7 @@ Make these exact replacements outside the Model Configuration section:
 
 ```diff
 -                          │  (qwen3-reranker)     │
-+                          │ (granite-reranker)    │
++                          │   (jina-reranker)     │
 ```
 
 ```diff
@@ -1248,14 +1258,14 @@ Replace the three-row GGUF model table with:
 | Model | Purpose | Size |
 |-------|---------|------|
 | `embeddinggemma-300M-Q8_0` | Vector embeddings (default) | ~300 MB |
-| `granite-embedding-reranker-english-r2-Q8_0` | Re-ranking | ~161 MB |
+| `Jina-Bert-Implementation-38M-F16` | Re-ranking | ~77 MB |
 | `qmd-query-expansion-granite-2b-grpo-q4_k_m` | Query expansion (fine-tuned) | ~1.55 GB |
 ```
 
 In the sample `models:` configuration, preserve the embed line and replace the other two lines with:
 
 ```yaml
-  rerank: "hf:keisuke-miyako/granite-embedding-reranker-english-r2-gguf-q8_0/granite-embedding-reranker-english-r2-Q8_0.gguf"
+  rerank: "hf:ggml-org/jina-reranker-v1-turbo-en-GGUF/Jina-Bert-Implementation-38M-F16.gguf"
   generate: "hf:nichenke/qmd-query-expansion-granite-2b-grpo-gguf/qmd-query-expansion-granite-2b-grpo-q4_k_m.gguf"
 ```
 
@@ -1272,7 +1282,7 @@ The default models are defined in `src/llm.ts` as Hugging Face URIs:
 
 ```typescript
 const DEFAULT_EMBED_MODEL = "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf";
-const DEFAULT_RERANK_MODEL = "hf:keisuke-miyako/granite-embedding-reranker-english-r2-gguf-q8_0/granite-embedding-reranker-english-r2-Q8_0.gguf";
+const DEFAULT_RERANK_MODEL = "hf:ggml-org/jina-reranker-v1-turbo-en-GGUF/Jina-Bert-Implementation-38M-F16.gguf";
 const DEFAULT_GENERATE_MODEL = "hf:nichenke/qmd-query-expansion-granite-2b-grpo-gguf/qmd-query-expansion-granite-2b-grpo-q4_k_m.gguf";
 ```
 
@@ -1296,11 +1306,14 @@ profile selection differ in this fork.
 "title: {title} | text: {content}"
 ```
 
-### IBM Granite R2 reranker
+### Jina reranker
 
 Uses node-llama-cpp's `createRankingContext()` and `rankAndSort()` APIs for
 cross-encoder reranking. It returns documents sorted by a relevance score from
-0.0 through 1.0.
+0.0 through 1.0. The default is the official ggml-org F16 conversion of Jina
+AI's Apache-2.0 English JinaBERT reranker (about 77 MB). Jina documents that it
+was knowledge-distilled from a non-public Jina base reranker; the practical
+lineage policy explicitly accepts that incomplete teacher-checkpoint audit.
 
 ### Query expansion profiles
 
@@ -1318,8 +1331,8 @@ Under `## [Unreleased]`, add:
 ```md
 ### Changed
 
-- Fork defaults now use Google's EmbeddingGemma plus IBM Granite query
-  expansion and reranking models, avoiding Chinese-developed model weights on
+- Fork defaults now use Google's EmbeddingGemma, IBM Granite query expansion,
+  and Jina AI reranking models, avoiding Chinese-developed model weights on
   a fresh installation. Query expansion selects a model-aware prompt and
   grammar profile while preserving explicit custom-model overrides.
 
