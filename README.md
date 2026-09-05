@@ -52,9 +52,9 @@ its normal local model cache, `~/.cache/qmd/models/`:
 
 | Default | Role | Approximate download |
 |---------|------|----------------------|
-| Google EmbeddingGemma 300M Q8 | Embeddings | 318 MB |
-| IBM Granite-based QMD expander Q4_K_M | Query expansion | 1.4 GB |
-| Jina reranker v1 turbo English F16 | Reranking | 73 MB |
+| Google EmbeddingGemma 300M Q8 | Embeddings | 318 MiB |
+| IBM Granite-based QMD expander Q4_K_M | Query expansion | 1.4 GiB |
+| Jina reranker v1 turbo English F16 | Reranking | 73 MiB |
 
 The query-expansion checkpoint uses an IBM base model, but part of its label
 dataset has incomplete generator provenance. See the model-policy discussion
@@ -632,9 +632,9 @@ QMD uses three local GGUF models (auto-downloaded on first use):
 
 | Model | Purpose | Size |
 |-------|---------|------|
-| `embeddinggemma-300M-Q8_0` | Vector embeddings (default) | ~318 MB |
-| `Jina-Bert-Implementation-38M-F16` | Re-ranking | ~73 MB |
-| `qmd-query-expansion-granite-2b-grpo-q4_k_m` | Query expansion (fine-tuned) | ~1.4 GB |
+| `embeddinggemma-300M-Q8_0` | Vector embeddings (default) | ~318 MiB |
+| `Jina-Bert-Implementation-38M-F16` | Re-ranking | ~73 MiB |
+| `qmd-query-expansion-granite-2b-grpo-q4_k_m` | Query expansion (fine-tuned) | ~1.4 GiB |
 
 Models are downloaded from HuggingFace and cached in `~/.cache/qmd/models/`.
 
