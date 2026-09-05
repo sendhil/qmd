@@ -28,6 +28,9 @@ describe("resolveQueryExpansionProfile", () => {
     expect(profile.id).toBe("qwen");
     expect(profile.systemPrompt).toBeUndefined();
     expect(profile.prompt("auth config")).toBe("/no_think Expand this search query: auth config");
+    expect(profile.maxTokens).toBe(600);
+    expect(profile.grammar).toContain("root ::= line+");
+    expect(profile.grammar).not.toBe(BOUNDED_EXPANSION_GRAMMAR);
   });
 
   test("uses a bounded neutral profile for unknown generators", () => {
