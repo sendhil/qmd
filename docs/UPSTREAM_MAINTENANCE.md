@@ -54,6 +54,40 @@ distillation teachers, training-label provenance, license, GGUF converter and
 source revision, artifact size, and QMD API test results. Multilingual Chinese
 support is allowed; Chinese-developed model ancestry is not.
 
+### Approved Jina reranker audit record
+
+- Developer and jurisdiction: Jina AI, a German/EU company.
+- Architecture and base: English JinaBERT cross-encoder, 37.8 million
+  parameters.
+- Distillation: distilled from the unavailable `jina-reranker-v1-base-en`
+  teacher checkpoint.
+- Provenance exception: the inaccessible teacher weights and partially opaque
+  teacher/training-label provenance cannot be independently audited. The user
+  explicitly accepted this under the practical-lineage policy.
+- License: Apache-2.0.
+- Conversion: official `ggml-org` GGUF conversion at
+  `hf:ggml-org/jina-reranker-v1-turbo-en-GGUF/Jina-Bert-Implementation-38M-F16.gguf`.
+- Verified artifact: 76,971,168 bytes; SHA-256
+  `71abc010bb3dce97812ee971509a5cb6ff6f6b8cfffd8480129242f605521fca`.
+- QMD gate: expected document ranked first in 6/7 fixtures and within the top
+  two in 7/7; the intent-aware full deep-search fixture ranked first. All
+  scores were finite and within `[0, 1]`, and QMD reported the exact configured
+  reranker rather than a fallback.
+
+Preserve this Jina default unless a replacement receives an equally complete
+audit and passes the real-model gate.
+
+### Approved Granite generator provenance exception
+
+The generator URI is
+`hf:nichenke/qmd-query-expansion-granite-2b-grpo-gguf/qmd-query-expansion-granite-2b-grpo-q4_k_m.gguf`.
+It is a QMD-specific GRPO checkpoint based on IBM Granite 3.3 2B. Some of its
+label dataset has incomplete generator provenance; the user explicitly
+accepted that limitation under the same practical-lineage policy. Preserve
+this caveat during upstream merges and model changes. The complete policy and
+test thresholds are recorded in
+[`docs/superpowers/specs/2026-09-05-non-chinese-model-defaults-design.md`](superpowers/specs/2026-09-05-non-chinese-model-defaults-design.md#model-policy).
+
 ## Validation
 
 First confirm default URIs manually. Then run:
@@ -61,7 +95,7 @@ First confirm default URIs manually. Then run:
 ```sh
 npm test
 npm run lint
-npm run smoke:non-chinese-models
+GGML_METAL_NO_RESIDENCY=1 npm run smoke:non-chinese-models
 npm pack --dry-run
 ```
 
