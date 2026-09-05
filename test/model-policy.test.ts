@@ -12,7 +12,7 @@ describe("fork default model policy", () => {
     DEFAULT_RERANK_MODEL_URI,
   ];
 
-  test("uses the approved Google and IBM model artifacts", () => {
+  test("uses the approved Google, IBM, and Jina model artifacts", () => {
     expect(DEFAULT_EMBED_MODEL_URI).toBe(
       "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf",
     );
@@ -20,7 +20,7 @@ describe("fork default model policy", () => {
       "hf:nichenke/qmd-query-expansion-granite-2b-grpo-gguf/qmd-query-expansion-granite-2b-grpo-q4_k_m.gguf",
     );
     expect(DEFAULT_RERANK_MODEL_URI).toBe(
-      "hf:keisuke-miyako/granite-embedding-reranker-english-r2-gguf-q8_0/granite-embedding-reranker-english-r2-Q8_0.gguf",
+      "hf:ggml-org/jina-reranker-v1-turbo-en-GGUF/Jina-Bert-Implementation-38M-F16.gguf",
     );
   });
 
