@@ -13,12 +13,13 @@
 ## File Map
 
 - Create `src/query-expansion-profile.ts`: model URI normalization, profile selection, prompts, grammars, and generation limits.
-- Create `test/query-expansion-profile.test.ts`: deterministic profile and model-policy tests that never load a model.
+- Create `test/model-policy.test.ts`: deterministic approved-default and denied-lineage assertions.
+- Create `test/query-expansion-profile.test.ts`: deterministic profile-selection tests that never load a model.
 - Modify `src/llm.ts`: approved default URIs, expanded chat-session type, profile use, parsed-output validation, deduplication, and safe fallback.
-- Modify `test/llm.test.ts`: mock-based coverage of prompt wiring, bounded output, filtering, and fallback behavior.
+- Create `test/query-expansion-runtime.test.ts`: isolated mock-based coverage of prompt wiring, bounded output, filtering, and fallback behavior.
 - Create `scripts/smoke-non-chinese-models.ts`: opt-in Node-based checks against the real Granite expansion and reranking GGUFs.
 - Create `test/fixtures/non-chinese-model-smoke.ts`: queries, anchors, expected documents, and distractors for the smoke harness.
-- Modify `package.json`: expose the opt-in smoke command and include required maintenance documentation in GitHub/package builds where appropriate.
+- Modify `package.json`: expose the opt-in smoke command.
 - Create `AGENTS.md`: concise fork invariants and automatic routing to the detailed maintenance runbook.
 - Create `docs/UPSTREAM_MAINTENANCE.md`: exact upstream synchronization, validation, tagging, and rollback procedure.
 - Modify `README.md`: fork purpose, installation, model downloads, `pi-memory`, standalone QMD, overrides, and provenance caveat.
@@ -27,13 +28,14 @@
 ### Task 1: Lock the approved default-model policy with failing tests
 
 **Files:**
-- Modify: `test/llm.test.ts`
+- Create: `test/model-policy.test.ts`
 
 - [ ] **Step 1: Write tests for the exact approved defaults and denylist**
 
-Add these imports to `test/llm.test.ts`:
+Create `test/model-policy.test.ts` with:
 
 ```ts
+import { describe, expect, test } from "vitest";
 import {
   DEFAULT_EMBED_MODEL_URI,
   DEFAULT_GENERATE_MODEL_URI,
@@ -75,7 +77,7 @@ describe("fork default model policy", () => {
 Run:
 
 ```sh
-node ./node_modules/vitest/vitest.mjs run test/llm.test.ts --reporter=verbose
+CI=true node ./node_modules/vitest/vitest.mjs run test/model-policy.test.ts --reporter=verbose --configLoader=runner
 ```
 
 Expected: the two exact-URI assertions for generation and reranking fail because upstream defaults still point to Qwen-derived artifacts.
@@ -83,7 +85,7 @@ Expected: the two exact-URI assertions for generation and reranking fail because
 - [ ] **Step 3: Commit the failing policy tests**
 
 ```sh
-git add test/llm.test.ts
+git add test/model-policy.test.ts
 git commit -m "test: lock non-Chinese default model policy"
 ```
 
@@ -108,7 +110,7 @@ const DEFAULT_GENERATE_MODEL =
 
 Delete the commented-out Qwen default beside these constants so an agent cannot accidentally restore it while resolving an upstream conflict. Do not remove explicit custom-model support elsewhere.
 
-In the existing `LlamaCpp model resolution (config > env > default)` test block, replace the three duplicated `HARDCODED_*` strings with the exported constants:
+Add the three exported default URI constants to `test/llm.test.ts`'s existing `../src/llm.js` import. In the existing `LlamaCpp model resolution (config > env > default)` test block, replace the three duplicated `HARDCODED_*` strings with the exported constants:
 
 ```ts
 const HARDCODED_EMBED = DEFAULT_EMBED_MODEL_URI;
@@ -139,7 +141,7 @@ Do not remove Qwen references that specifically document explicit embedding or g
 Run:
 
 ```sh
-node ./node_modules/vitest/vitest.mjs run test/llm.test.ts test/cli.test.ts --reporter=verbose
+CI=true node ./node_modules/vitest/vitest.mjs run test/model-policy.test.ts test/cli.test.ts --reporter=verbose --configLoader=runner
 ```
 
 Expected: PASS. Existing configuration and environment-variable precedence tests continue to pass, and the new exact-default tests pass.
@@ -216,7 +218,7 @@ describe("resolveQueryExpansionProfile", () => {
 Run:
 
 ```sh
-node ./node_modules/vitest/vitest.mjs run test/query-expansion-profile.test.ts --reporter=verbose
+node ./node_modules/vitest/vitest.mjs run test/query-expansion-profile.test.ts --reporter=verbose --configLoader=runner
 ```
 
 Expected: FAIL because `src/query-expansion-profile.ts` does not exist.
@@ -284,7 +286,7 @@ export function resolveQueryExpansionProfile(modelUri: string): QueryExpansionPr
 Run:
 
 ```sh
-node ./node_modules/vitest/vitest.mjs run test/query-expansion-profile.test.ts --reporter=verbose
+node ./node_modules/vitest/vitest.mjs run test/query-expansion-profile.test.ts --reporter=verbose --configLoader=runner
 bun test --preload ./src/test-preload.ts test/query-expansion-profile.test.ts
 ```
 
@@ -302,18 +304,27 @@ git commit -m "feat: add model-aware query expansion profiles"
 **Files:**
 - Modify: `src/llm.ts:13-27`
 - Modify: `src/llm.ts:1602-1699`
-- Modify: `test/llm.test.ts`
+- Create: `test/query-expansion-runtime.test.ts`
 
 - [ ] **Step 1: Write a mock-based failing test for Granite prompt wiring**
 
-Add `resolveQueryExpansionProfile` coverage through `LlamaCpp.expandQuery()` in `test/llm.test.ts`. The mock must capture constructor and prompt arguments:
+Create `test/query-expansion-runtime.test.ts` to cover `LlamaCpp.expandQuery()` without collecting the existing real-model suites in `test/llm.test.ts`. Start with these imports:
 
-First add `type Queryable` and `type QueryExpansionDiagnostics` to the existing `../src/llm.js` import. Then define this helper beside the new tests:
+```ts
+import { describe, expect, test, vi } from "vitest";
+import {
+  DEFAULT_GENERATE_MODEL_URI,
+  LlamaCpp,
+  setNodeLlamaCppModuleForTest,
+  type Queryable,
+} from "../src/llm.js";
+```
+
+Then define this helper beside the new tests:
 
 ```ts
 async function runMockedExpansion(
   output: string | Error,
-  onDiagnostics?: (diagnostics: QueryExpansionDiagnostics) => void,
 ): Promise<Queryable[]> {
   const sequence = { dispose: vi.fn(async () => {}) };
   const context = {
@@ -345,7 +356,7 @@ async function runMockedExpansion(
   };
 
   try {
-    return await llm.expandQuery("auth setup", { onDiagnostics });
+    return await llm.expandQuery("auth setup");
   } finally {
     await llm.dispose();
     setNodeLlamaCppModuleForTest(null);
@@ -439,33 +450,26 @@ test("expandQuery deduplicates identical typed output", async () => {
 });
 
 test("expandQuery falls back when parsing loses an expansion type", async () => {
-  let diagnostics: QueryExpansionDiagnostics | undefined;
   const result = await runMockedExpansion([
     "lex: auth setup",
     "lex: auth settings",
     "vec: auth configuration",
-  ].join("\n"), (value) => { diagnostics = value; });
+  ].join("\n"));
 
   expect(result).toEqual([
     { type: "hyde", text: "Information about auth setup" },
     { type: "lex", text: "auth setup" },
     { type: "vec", text: "auth setup" },
   ]);
-  expect(diagnostics).toMatchObject({ usedFallback: true });
 });
 
-test("expandQuery reports generation failure and keeps the original query", async () => {
-  let diagnostics: QueryExpansionDiagnostics | undefined;
-  const result = await runMockedExpansion(
-    new Error("generation failed"),
-    (value) => { diagnostics = value; },
-  );
+test("expandQuery keeps the original query after generation failure", async () => {
+  const result = await runMockedExpansion(new Error("generation failed"));
 
   expect(result).toEqual([
     { type: "lex", text: "auth setup" },
     { type: "vec", text: "auth setup" },
   ]);
-  expect(diagnostics).toEqual({ rawOutput: null, usedFallback: true });
 });
 ```
 
@@ -474,29 +478,12 @@ test("expandQuery reports generation failure and keeps the original query", asyn
 Run:
 
 ```sh
-node ./node_modules/vitest/vitest.mjs run test/llm.test.ts --reporter=verbose
+CI=true node ./node_modules/vitest/vitest.mjs run test/query-expansion-runtime.test.ts --reporter=verbose --configLoader=runner
 ```
 
 Expected: prompt/system-profile assertions fail; duplicate output is retained; incomplete output does not use the three-entry fallback.
 
-- [ ] **Step 4: Add typed expansion diagnostics and expand the local constructor type**
-
-Define these exported types immediately after `Queryable` in `src/llm.ts`:
-
-```ts
-export type QueryExpansionDiagnostics = {
-  rawOutput: string | null;
-  usedFallback: boolean;
-};
-
-export type QueryExpansionOptions = {
-  context?: string;
-  includeLexical?: boolean;
-  onDiagnostics?: (diagnostics: QueryExpansionDiagnostics) => void;
-};
-```
-
-Replace all three inline expansion option types—in `ILLMSession`, `LLM`, and `LLMSession.expandQuery()`—plus the concrete `LlamaCpp.expandQuery()` signature with `QueryExpansionOptions`. This optional observer exists so the release smoke test can distinguish generated output from a fallback without changing ordinary callers or return values.
+- [ ] **Step 4: Expand the local node-llama-cpp constructor type**
 
 Change `NodeLlamaCppModule.LlamaChatSession` in `src/llm.ts` to:
 
@@ -522,13 +509,6 @@ At the start of `expandQuery()`, after resolving `includeLexical`, add:
 ```ts
 const profile = resolveQueryExpansionProfile(this.generateModelUri);
 const prompt = profile.prompt(query);
-const reportDiagnostics = (diagnostics: QueryExpansionDiagnostics): void => {
-  try {
-    options.onDiagnostics?.(diagnostics);
-  } catch {
-    // Diagnostics are observational and must never change search behavior.
-  }
-};
 ```
 
 Replace the inline grammar string with:
@@ -592,13 +572,9 @@ if (complete) {
   const filtered = includeLexical
     ? queryables
     : queryables.filter((item) => item.type !== "lex");
-  if (filtered.length > 0) {
-    reportDiagnostics({ rawOutput: result, usedFallback: false });
-    return filtered;
-  }
+  if (filtered.length > 0) return filtered;
 }
 
-reportDiagnostics({ rawOutput: result, usedFallback: true });
 const fallback: Queryable[] = [
   { type: "hyde", text: `Information about ${query}` },
   { type: "lex", text: query },
@@ -607,21 +583,15 @@ const fallback: Queryable[] = [
 return includeLexical ? fallback : fallback.filter((item) => item.type !== "lex");
 ```
 
-In the exception handler, call this before constructing the existing lexical/vector fallback:
-
-```ts
-reportDiagnostics({ rawOutput: null, usedFallback: true });
-```
-
-Keep that exception fallback as lexical plus vector original-query entries. Do not resolve another model in either fallback.
+Keep the exception fallback as lexical plus vector original-query entries. Do not resolve another model in either fallback.
 
 - [ ] **Step 7: Run focused tests under Node and Bun**
 
 Run:
 
 ```sh
-node ./node_modules/vitest/vitest.mjs run test/query-expansion-profile.test.ts test/llm.test.ts --reporter=verbose
-bun test --preload ./src/test-preload.ts test/query-expansion-profile.test.ts test/llm.test.ts
+CI=true node ./node_modules/vitest/vitest.mjs run test/query-expansion-profile.test.ts test/query-expansion-runtime.test.ts --reporter=verbose --configLoader=runner
+CI=true bun test --preload ./src/test-preload.ts test/query-expansion-profile.test.ts test/query-expansion-runtime.test.ts
 ```
 
 Expected: PASS without any model downloads.
@@ -639,7 +609,7 @@ Expected: PASS; the expanded `LlamaChatSession` constructor type accepts the opt
 - [ ] **Step 9: Commit runtime integration**
 
 ```sh
-git add src/llm.ts test/llm.test.ts
+git add src/llm.ts test/query-expansion-runtime.test.ts
 git commit -m "feat: apply model-specific expansion profiles"
 ```
 
@@ -668,7 +638,7 @@ test("exposes an opt-in non-Chinese model smoke test", () => {
 Run:
 
 ```sh
-node ./node_modules/vitest/vitest.mjs run test/package.test.ts --reporter=verbose
+node ./node_modules/vitest/vitest.mjs run test/package.test.ts --reporter=verbose --configLoader=runner
 ```
 
 Expected: FAIL because `smoke:non-chinese-models` is absent.
@@ -787,17 +757,48 @@ import { performance } from "node:perf_hooks";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  getLlama,
+  getLlamaGpuTypes,
+  LlamaChatSession as RealLlamaChatSession,
+  LlamaLogLevel,
+  resolveModelFile,
+  type LLamaChatPromptOptions,
+  type LlamaContextSequence,
+  type LlamaOptions,
+} from "node-llama-cpp";
 import { createStore } from "../src/index.js";
 import {
   DEFAULT_EMBED_MODEL_URI,
   DEFAULT_GENERATE_MODEL_URI,
   DEFAULT_RERANK_MODEL_URI,
   LlamaCpp,
-  type QueryExpansionDiagnostics,
+  setNodeLlamaCppModuleForTest,
 } from "../src/llm.js";
 import { expansionCases, rerankCases } from "../test/fixtures/non-chinese-model-smoke.js";
 
 const DENIED = /qwen|deepseek|baai|\bbge\b|alibaba|\bgte\b|minicpm|chatglm|\bglm\b|\byi\b|internlm/i;
+let capturedRaw: string | null = null;
+
+class CapturingLlamaChatSession {
+  private readonly inner: RealLlamaChatSession;
+
+  constructor(options: { contextSequence: unknown; systemPrompt?: string }) {
+    this.inner = new RealLlamaChatSession({
+      contextSequence: options.contextSequence as LlamaContextSequence,
+      ...(options.systemPrompt ? { systemPrompt: options.systemPrompt } : {}),
+    });
+  }
+
+  async prompt(prompt: string, options?: Record<string, unknown>): Promise<string> {
+    const raw = await this.inner.prompt(
+      prompt,
+      options as LLamaChatPromptOptions,
+    );
+    capturedRaw = raw;
+    return raw;
+  }
+}
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -822,6 +823,14 @@ async function main(): Promise<void> {
   assert(!DENIED.test(DEFAULT_GENERATE_MODEL_URI), "generator violates model policy");
   assert(!DENIED.test(DEFAULT_RERANK_MODEL_URI), "reranker violates model policy");
 
+  setNodeLlamaCppModuleForTest({
+    getLlama: (options) => getLlama(options as LlamaOptions),
+    getLlamaGpuTypes,
+    resolveModelFile,
+    LlamaChatSession: CapturingLlamaChatSession,
+    LlamaLogLevel,
+  });
+
   const llm = new LlamaCpp({ inactivityTimeoutMs: 0 });
   try {
     await llm.expandQuery("warm up query expansion");
@@ -829,17 +838,14 @@ async function main(): Promise<void> {
 
     for (const fixture of expansionCases) {
       const started = performance.now();
-      let diagnostics: QueryExpansionDiagnostics | undefined;
+      capturedRaw = null;
       const output = await withTimeout(
-        llm.expandQuery(fixture.query, {
-          context: fixture.context,
-          onDiagnostics: (value) => { diagnostics = value; },
-        }),
+        llm.expandQuery(fixture.query, { context: fixture.context }),
         30_000,
         `expansion: ${fixture.query}`,
       );
       const elapsedMs = performance.now() - started;
-      const rawLines = diagnostics?.rawOutput?.trimEnd().split("\n") ?? [];
+      const rawLines = capturedRaw?.trimEnd().split("\n") ?? [];
       const expectedTypes = ["hyde", "lex", "lex", "vec", "vec", "vec"];
       const rawShapeValid = rawLines.length === expectedTypes.length
         && rawLines.every((line, index) =>
@@ -851,6 +857,18 @@ async function main(): Promise<void> {
         output.filter((other) => other.type === item.type).length,
       ]));
       const keys = output.map((item) => `${item.type}\u0000${item.text}`);
+      const successfulFallback = JSON.stringify([
+        { type: "hyde", text: `Information about ${fixture.query}` },
+        { type: "lex", text: fixture.query },
+        { type: "vec", text: fixture.query },
+      ]);
+      const exceptionFallback = JSON.stringify([
+        { type: "lex", text: fixture.query },
+        { type: "vec", text: fixture.query },
+      ]);
+      const serializedOutput = JSON.stringify(output);
+      const usedFallback = serializedOutput === successfulFallback
+        || serializedOutput === exceptionFallback;
       const anchorFound = output
         .filter((item) => item.type === "lex" || item.type === "vec")
         .some((item) => fixture.anchors.some((anchor) =>
@@ -858,7 +876,8 @@ async function main(): Promise<void> {
         ));
 
       const passed = elapsedMs <= 30_000
-        && diagnostics?.usedFallback === false
+        && capturedRaw !== null
+        && !usedFallback
         && rawShapeValid
         && output.length >= 3 && output.length <= 6
         && (counts.get("hyde") ?? 0) >= 1
@@ -875,7 +894,8 @@ async function main(): Promise<void> {
         query: fixture.query,
         elapsedMs,
         passed,
-        diagnostics,
+        rawOutput: capturedRaw,
+        usedFallback,
         output,
       }));
     }
@@ -902,6 +922,7 @@ async function main(): Promise<void> {
     assert(rerankTopOnes >= 6, `only ${rerankTopOnes}/7 rerank fixtures ranked expected first`);
   } finally {
     await llm.dispose();
+    setNodeLlamaCppModuleForTest(null);
   }
 
   // Use a fresh store only after releasing the direct-test model contexts, so
@@ -972,7 +993,7 @@ This command must not be included in `npm test` because it downloads approximate
 Run:
 
 ```sh
-node ./node_modules/vitest/vitest.mjs run test/package.test.ts --reporter=verbose
+node ./node_modules/vitest/vitest.mjs run test/package.test.ts --reporter=verbose --configLoader=runner
 npm run test:types
 ```
 
