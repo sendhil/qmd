@@ -119,7 +119,7 @@ async function main(): Promise<void> {
       const elapsedMs = performance.now() - started;
       const rawLines = capturedRaw?.trimEnd().split("\n") ?? [];
       const expectedTypes = ["hyde", "lex", "lex", "vec", "vec", "vec"];
-      const rawShapeValid = rawLines.length === expectedTypes.length
+      const rawExpansionValid = rawLines.length === expectedTypes.length
         && rawLines.every((line, index) =>
           line.startsWith(`${expectedTypes[index]}: `) && /^(hyde|lex|vec): .+$/.test(line),
         )
@@ -150,7 +150,7 @@ async function main(): Promise<void> {
       const passed = elapsedMs <= 30_000
         && capturedRaw !== null
         && !usedFallback
-        && rawShapeValid
+        && rawExpansionValid
         && output.length >= 3 && output.length <= 6
         && (counts.get("hyde") ?? 0) >= 1
         && (counts.get("lex") ?? 0) >= 1
