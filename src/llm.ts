@@ -280,9 +280,10 @@ export type RerankDocument = {
 // Format: hf:<user>/<repo>/<file>
 // Override via QMD_EMBED_MODEL env var (e.g. hf:Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf)
 const DEFAULT_EMBED_MODEL = "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf";
-const DEFAULT_RERANK_MODEL = "hf:ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF/qwen3-reranker-0.6b-q8_0.gguf";
-// const DEFAULT_GENERATE_MODEL = "hf:ggml-org/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q8_0.gguf";
-const DEFAULT_GENERATE_MODEL = "hf:tobil/qmd-query-expansion-1.7B-gguf/qmd-query-expansion-1.7B-q4_k_m.gguf";
+const DEFAULT_RERANK_MODEL =
+  "hf:keisuke-miyako/granite-embedding-reranker-english-r2-gguf-q8_0/granite-embedding-reranker-english-r2-Q8_0.gguf";
+const DEFAULT_GENERATE_MODEL =
+  "hf:nichenke/qmd-query-expansion-granite-2b-grpo-gguf/qmd-query-expansion-granite-2b-grpo-q4_k_m.gguf";
 
 // Alternative generation models for query expansion:
 // LiquidAI LFM2 - hybrid architecture optimized for edge/on-device inference
@@ -1303,12 +1304,8 @@ export class LlamaCpp implements LLM {
    * VRAM per context is governed by contextSize alone —
    * LlamaRankingContextOptions has no flashAttention option.
    */
-  // Qwen3 reranker template adds ~200 tokens overhead (system prompt, tags, etc.)
-  // Default 2048 was too small for longer documents (e.g. session transcripts,
-  // CJK text, or large markdown files) — callers hit "input lengths exceed
-  // context size" errors even after truncation because the overhead estimate
-  // was insufficient.  4096 comfortably fits the largest real-world chunks
-  // while staying well below the 40 960-token auto size.
+  // Ranking templates add model-specific prompt tokens. The conservative 4096
+  // context keeps long real-world chunks below the model limit after truncation.
   // Override with QMD_RERANK_CONTEXT_SIZE env var if you need more headroom.
   private static readonly RERANK_CONTEXT_SIZE: number = (() => {
     const v = parseInt(process.env.QMD_RERANK_CONTEXT_SIZE ?? "", 10);
@@ -1696,9 +1693,8 @@ export class LlamaCpp implements LLM {
     }
   }
 
-  // Qwen3 reranker chat template overhead (system prompt, tags, separators).
-  // Measured at ~350 tokens on real queries; use 512 as a safe upper bound so
-  // the truncation budget never lets a document slip past the context limit.
+  // Reserve a conservative 512-token budget for model-specific ranking template
+  // overhead so a document cannot exceed the configured context after truncation.
   private static readonly RERANK_TEMPLATE_OVERHEAD = 512;
   private static readonly RERANK_TARGET_DOCS_PER_CONTEXT = 10;
 

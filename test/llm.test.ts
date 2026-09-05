@@ -26,6 +26,9 @@ import {
   estimateEmbedContextMB,
   BASELINE_EMBED_CONTEXT_MB,
   EMBED_POOL_RERANK_RESERVE_MB,
+  DEFAULT_EMBED_MODEL_URI,
+  DEFAULT_GENERATE_MODEL_URI,
+  DEFAULT_RERANK_MODEL_URI,
   resolveEmbedModel,
   resolveGenerateModel,
   resolveRerankModel,
@@ -619,9 +622,9 @@ describe("LlamaCpp expand context size config", () => {
 });
 
 describe("LlamaCpp model resolution (config > env > default)", () => {
-  const HARDCODED_EMBED = "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf";
-  const HARDCODED_RERANK = "hf:ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF/qwen3-reranker-0.6b-q8_0.gguf";
-  const HARDCODED_GENERATE = "hf:tobil/qmd-query-expansion-1.7B-gguf/qmd-query-expansion-1.7B-q4_k_m.gguf";
+  const HARDCODED_EMBED = DEFAULT_EMBED_MODEL_URI;
+  const HARDCODED_RERANK = DEFAULT_RERANK_MODEL_URI;
+  const HARDCODED_GENERATE = DEFAULT_GENERATE_MODEL_URI;
 
   test("uses hardcoded default when no config or env is set", () => {
     const prev = process.env.QMD_EMBED_MODEL;
