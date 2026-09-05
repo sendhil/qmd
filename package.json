@@ -43,7 +43,8 @@
     "rerank": "tsx src/cli/qmd.ts rerank",
     "inspector": "npx @modelcontextprotocol/inspector tsx src/cli/qmd.ts mcp",
     "release": "./scripts/release.sh",
-    "smoke:package-grammars": "node scripts/check-package-grammars.mjs"
+    "smoke:package-grammars": "node scripts/check-package-grammars.mjs",
+    "smoke:non-chinese-models": "tsx scripts/smoke-non-chinese-models.ts"
   },
   "publishConfig": {
     "access": "public"
