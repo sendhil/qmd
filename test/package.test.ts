@@ -12,6 +12,24 @@ describe("package test task", () => {
     );
   });
 
+  test("keeps the model smoke gate explicit, fallback-safe, and lifecycle-safe", () => {
+    const testAllScript = readFileSync(new URL("scripts/test-all.mjs", root), "utf8");
+    const smokeScript = readFileSync(
+      new URL("scripts/smoke-non-chinese-models.ts", root),
+      "utf8",
+    );
+
+    expect(testAllScript).not.toContain("smoke:non-chinese-models");
+    expect(smokeScript).toContain("embedModel: DEFAULT_EMBED_MODEL_URI");
+    expect(smokeScript).toContain("generateModel: DEFAULT_GENERATE_MODEL_URI");
+    expect(smokeScript).toContain("rerankModel: DEFAULT_RERANK_MODEL_URI");
+    expect(smokeScript).toContain("model !== DEFAULT_RERANK_MODEL_URI");
+    expect(smokeScript).toContain("const expectedPosition = fixtureIndex %");
+    expect(smokeScript).toContain("controller.abort");
+    expect(smokeScript).not.toContain("Promise.race");
+    expect(smokeScript).toContain("if (root) await rm(root, { recursive: true, force: true })");
+  });
+
   test("runs typecheck, unit tests, and package smoke checks", () => {
     expect(pkg.scripts.test).toContain("scripts/test-all.mjs");
 

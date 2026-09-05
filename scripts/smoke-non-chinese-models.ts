@@ -27,6 +27,7 @@ import {
 
 const DENIED = /qwen|deepseek|baai|\bbge\b|alibaba|\bgte\b|minicpm|chatglm|\bglm\b|\byi\b|internlm/i;
 let capturedRaw: string | null = null;
+let activeExpansionSignal: AbortSignal | undefined;
 
 class CapturingLlamaChatSession {
   private readonly inner: RealLlamaChatSession;
@@ -41,7 +42,10 @@ class CapturingLlamaChatSession {
   async prompt(prompt: string, options?: Record<string, unknown>): Promise<string> {
     const raw = await this.inner.prompt(
       prompt,
-      options as LLamaChatPromptOptions,
+      {
+        ...options,
+        ...(activeExpansionSignal ? { signal: activeExpansionSignal } : {}),
+      } as LLamaChatPromptOptions,
     );
     capturedRaw = raw;
     return raw;
@@ -52,21 +56,23 @@ function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
 
-async function withTimeout<T>(
-  operation: Promise<T>,
+async function expandWithDeadline(
+  llm: LlamaCpp,
+  query: string,
+  context: string | undefined,
   timeoutMs: number,
   label: string,
-): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
+): Promise<Awaited<ReturnType<LlamaCpp["expandQuery"]>>> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort(new Error(`${label} timed out`));
+  }, timeoutMs);
+  activeExpansionSignal = controller.signal;
   try {
-    return await Promise.race([
-      operation,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`${label} timed out`)), timeoutMs);
-      }),
-    ]);
+    return await llm.expandQuery(query, { context });
   } finally {
-    if (timer) clearTimeout(timer);
+    clearTimeout(timer);
+    activeExpansionSignal = undefined;
   }
 }
 
@@ -84,16 +90,29 @@ async function main(): Promise<void> {
     LlamaLogLevel,
   });
 
-  const llm = new LlamaCpp({ inactivityTimeoutMs: 0 });
+  const llm = new LlamaCpp({
+    embedModel: DEFAULT_EMBED_MODEL_URI,
+    generateModel: DEFAULT_GENERATE_MODEL_URI,
+    rerankModel: DEFAULT_RERANK_MODEL_URI,
+    inactivityTimeoutMs: 0,
+  });
   try {
-    await llm.expandQuery("warm up query expansion");
+    await expandWithDeadline(
+      llm,
+      "warm up query expansion",
+      undefined,
+      30_000,
+      "expansion warmup",
+    );
     let expansionPasses = 0;
 
     for (const fixture of expansionCases) {
       const started = performance.now();
       capturedRaw = null;
-      const output = await withTimeout(
-        llm.expandQuery(fixture.query, { context: fixture.context }),
+      const output = await expandWithDeadline(
+        llm,
+        fixture.query,
+        fixture.context,
         30_000,
         `expansion: ${fixture.query}`,
       );
@@ -159,13 +178,17 @@ async function main(): Promise<void> {
 
     let rerankTopOnes = 0;
     const rerankFailures: string[] = [];
-    for (const fixture of rerankCases) {
-      const documents = [fixture.expected, ...fixture.distractors]
-        .map((text, index) => ({
-          file: index === 0 ? "expected.md" : `distractor-${index}.md`,
-          text,
-        }));
-      const { results } = await llm.rerank(fixture.query, documents);
+    for (const [fixtureIndex, fixture] of rerankCases.entries()) {
+      const documents = fixture.distractors.map((text, index) => ({
+        file: `distractor-${index + 1}.md`,
+        text,
+      }));
+      const expectedPosition = fixtureIndex % (documents.length + 1);
+      documents.splice(expectedPosition, 0, {
+        file: "expected.md",
+        text: fixture.expected,
+      });
+      const { results, model } = await llm.rerank(fixture.query, documents);
       const rank = results.findIndex((item) => item.file === "expected.md") + 1;
       const expectedResult = results.find((item) => item.file === "expected.md");
       const bestDistractor = results.find((item) => item.file !== "expected.md");
@@ -174,6 +197,9 @@ async function main(): Promise<void> {
       const scoresValid = results.every((item) =>
         Number.isFinite(item.score) && item.score >= 0 && item.score <= 1,
       );
+      if (model !== DEFAULT_RERANK_MODEL_URI) {
+        rerankFailures.push(`unexpected reranker model ${model}: ${fixture.query}`);
+      }
       if (!scoresValid) rerankFailures.push(`invalid reranker score: ${fixture.query}`);
       if (rank <= 0 || rank > 2) {
         rerankFailures.push(`expected document ranked ${rank}: ${fixture.query}`);
@@ -182,8 +208,10 @@ async function main(): Promise<void> {
       console.log(JSON.stringify({
         kind: "rerank",
         query: fixture.query,
+        expectedInputPosition: expectedPosition + 1,
         rank,
         scoreMargin,
+        model,
         results,
       }));
     }
@@ -197,22 +225,23 @@ async function main(): Promise<void> {
     setNodeLlamaCppModuleForTest(null);
   }
 
-  const root = await mkdtemp(join(tmpdir(), "qmd-non-chinese-smoke-"));
-  const docs = join(root, "docs");
-  await mkdir(docs);
-  const documents = {
-    "web-performance.md": "# Web performance\nCore Web Vitals measure page loading. Improve LCP by optimizing server response and image delivery.\n",
-    "employee-performance.md": "# Employee performance\nQuarterly reviews evaluate goals, collaboration, and career growth.\n",
-    "database-performance.md": "# Database performance\nA covering index reduced SQL query latency during the benchmark.\n",
-    "sports-performance.md": "# Athletic performance\nRecovery, sleep, and progressive training improve race results.\n",
-    "music-performance.md": "# Music performance\nThe concert performance begins at eight in the main hall.\n",
-  } as const;
-  for (const [name, body] of Object.entries(documents)) {
-    await writeFile(join(docs, name), body);
-  }
-
+  let root: string | undefined;
   let store: Awaited<ReturnType<typeof createStore>> | undefined;
   try {
+    root = await mkdtemp(join(tmpdir(), "qmd-non-chinese-smoke-"));
+    const docs = join(root, "docs");
+    await mkdir(docs);
+    const documents = {
+      "web-performance.md": "# Web performance\nCore Web Vitals measure page loading. Improve LCP by optimizing server response and image delivery.\n",
+      "employee-performance.md": "# Employee performance\nQuarterly reviews evaluate goals, collaboration, and career growth.\n",
+      "database-performance.md": "# Database performance\nA covering index reduced SQL query latency during the benchmark.\n",
+      "sports-performance.md": "# Athletic performance\nRecovery, sleep, and progressive training improve race results.\n",
+      "music-performance.md": "# Music performance\nThe concert performance begins at eight in the main hall.\n",
+    } as const;
+    for (const [name, body] of Object.entries(documents)) {
+      await writeFile(join(docs, name), body);
+    }
+
     store = await createStore({
       dbPath: join(root, "index.sqlite"),
       config: {
@@ -226,24 +255,34 @@ async function main(): Promise<void> {
     });
     await store.update();
     await store.embed();
-    const results = await withTimeout(
-      store.search({
-        query: "performance",
-        intent: "web page loading and Core Web Vitals, not employee reviews",
-        collection: "smoke",
-        limit: 5,
-      }),
-      60_000,
-      "intent-aware deep search",
-    );
+    const searchStarted = performance.now();
+    const results = await store.search({
+      query: "performance",
+      intent: "web page loading and Core Web Vitals, not employee reviews",
+      collection: "smoke",
+      limit: 5,
+    });
+    const elapsedMs = performance.now() - searchStarted;
     const rank = results.findIndex((item) => item.file.endsWith("web-performance.md")) + 1;
+    if (elapsedMs > 60_000) {
+      gateFailures.push(`intent-aware deep search took ${elapsedMs}ms`);
+    }
     if (rank <= 0 || rank > 2) {
       gateFailures.push(`intent-aware deep search ranked expected document ${rank}`);
     }
-    console.log(JSON.stringify({ kind: "deep-search", query: "performance", rank, results }));
+    console.log(JSON.stringify({
+      kind: "deep-search",
+      query: "performance",
+      elapsedMs,
+      rank,
+      results,
+    }));
   } finally {
-    if (store) await store.close();
-    await rm(root, { recursive: true, force: true });
+    try {
+      if (store) await store.close();
+    } finally {
+      if (root) await rm(root, { recursive: true, force: true });
+    }
   }
 
   assert(gateFailures.length === 0, gateFailures.join("; "));
