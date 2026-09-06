@@ -17,7 +17,7 @@
   "files": [
     "bin/",
     "dist/",
-    "skills/",
+    "skills/qmd/",
     "scripts/build.mjs",
     "scripts/check-package-grammars.mjs",
     "scripts/package-smoke.mjs",

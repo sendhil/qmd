@@ -154,7 +154,7 @@ bun test --preload ./src/test-preload.ts test/
 
 - SQLite FTS5 for full-text search (BM25)
 - sqlite-vec for vector similarity search
-- node-llama-cpp for embeddings (embeddinggemma), reranking (qwen3-reranker), and query expansion (Qwen3)
+- node-llama-cpp for embeddings (EmbeddingGemma), reranking (Jina), and query expansion (IBM Granite)
 - Reciprocal Rank Fusion (RRF) for combining results
 - Smart chunking: 900 tokens/chunk with 15% overlap, prefers markdown headings as boundaries
 - AST-aware chunking: use `--chunk-strategy auto` to chunk code files (.ts/.js/.py/.go/.rs) at function/class/import boundaries via tree-sitter. Default is `regex` (existing behavior). Markdown and unknown file types always use regex chunking.
@@ -174,9 +174,11 @@ bun test --preload ./src/test-preload.ts test/
 
 ## Releasing
 
-Use `/release <version>` to cut a release. Full changelog standards,
-release workflow, and git hook setup are documented in the
-[release skill](skills/release/SKILL.md).
+On `non-chinese-defaults` or the `sendhil/qmd` fork, do **not** run
+`/release` or `scripts/release.sh`: those are upstream-only and fail closed on
+this fork. Follow the verified-asset procedure in
+[`docs/UPSTREAM_MAINTENANCE.md`](docs/UPSTREAM_MAINTENANCE.md) instead. Use
+`/release <version>` only in the canonical upstream repository on `main`.
 
 Key points:
 - Add changelog entries under `## [Unreleased]` **as you make changes**

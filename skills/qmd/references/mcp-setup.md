@@ -3,10 +3,13 @@
 ## Install
 
 ```bash
-npm install -g @tobilu/qmd
 qmd collection add ~/path/to/markdown --name myknowledge
 qmd embed
 ```
+
+Install QMD first using the policy-protected fork release asset documented in
+the repository README. Do not replace a fork-managed installation with the
+upstream registry package or a Git branch install.
 
 ## Configure MCP Client
 

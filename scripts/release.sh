@@ -16,7 +16,22 @@ set -euo pipefail
 
 BUMP="${1:?Usage: release.sh [patch|minor|major|<version>]}"
 
-# Ensure we're on main and clean
+# This script is strictly for the upstream repository. The fork distributes
+# verified release assets from non-chinese-defaults; its release procedure is
+# intentionally separate so it cannot publish @tobilu/qmd or push fork work to
+# main by accident.
+UPSTREAM_ORIGIN="https://github.com/tobi/qmd.git"
+ORIGIN_URL="$(git remote get-url origin 2>/dev/null || true)"
+case "$ORIGIN_URL" in
+  "$UPSTREAM_ORIGIN"|"git@github.com:tobi/qmd.git"|"ssh://git@github.com/tobi/qmd.git") ;;
+  *)
+    echo "Error: origin must be the canonical upstream repository for scripts/release.sh." >&2
+    echo "For fork releases, follow docs/UPSTREAM_MAINTENANCE.md on non-chinese-defaults." >&2
+    exit 1
+    ;;
+esac
+
+# Ensure we're on the upstream main branch and clean.
 BRANCH=$(git branch --show-current)
 if [[ "$BRANCH" != "main" ]]; then
   echo "Error: must be on main branch (currently on $BRANCH)" >&2

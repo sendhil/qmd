@@ -41,18 +41,19 @@ dependencies, so do not use the branch as a global Git dependency. Install the
 canonical prebuilt GitHub release asset instead:
 
 ```sh
-npm install -g https://github.com/sendhil/qmd/releases/download/v2.8.3-sendhil.1/qmd-v2.8.3-sendhil.1.tgz
+npm install -g https://github.com/sendhil/qmd/releases/download/v2.8.3-sendhil.2/qmd-v2.8.3-sendhil.2.tgz
 ```
 
 GitHub's immutable-release setting is not enabled for this repository. The
 fork policy treats the tag and asset as immutable: never move or reuse the tag,
 and never replace or delete the published asset. Verify downloaded bytes
-against the canonical asset's pinned SHA-256:
-`6dc3af845e97fdd9da37ec46b625da8156bf59156d36b880879b2f3bbc6d7dc9`.
+against the SHA-256 recorded on the GitHub release before replacing a working
+installation.
 
 Fork releases use `v<upstream>-sendhil.<revision>`, with the revision reset to
-`1` for each new upstream baseline. `v2.8.3-sendhil.1` is the canonical release
-for this baseline. Embedding downloads EmbeddingGemma; the first deep query
+`1` for each new upstream baseline. `v2.8.3-sendhil.2` is the remediation
+release for this baseline; `.1` remains immutable historical evidence.
+Embedding downloads EmbeddingGemma; the first deep query
 also downloads the expander and reranker. QMD stores these GGUF files in its
 normal local model cache, `~/.cache/qmd/models/`:
 
@@ -61,6 +62,15 @@ normal local model cache, `~/.cache/qmd/models/`:
 | Google EmbeddingGemma 300M Q8 | Embeddings | 318 MiB |
 | IBM Granite-based QMD expander Q4_K_M | Query expansion | 1.4 GiB |
 | Jina reranker v1 turbo English F16 | Reranking | 73 MiB |
+
+Each built-in URI is fixed to a Hugging Face commit and verified by exact size
+and SHA-256 before QMD reuses or loads it:
+
+| Role | Revision | SHA-256 |
+|------|----------|---------|
+| EmbeddingGemma | `0f741b5a6585bd53aeb15cd1372c56f2a0f65e12` | `b5ce9d77a3fc4b3b39ccb5643c36777911cc4eb46a66962eadfa3f5f60490d63` |
+| Granite expander | `449c09bced7605802af16c2b431fd40e5e871b8c` | `a488061ddcf8ee3e18912cd29cb33cbe6396084946de75544650ac5620e5b6ed` |
+| Jina reranker | `8582fa8560bcdd3c5cbc9015514edff0f3b1871f` | `71abc010bb3dce97812ee971509a5cb6ff6f6b8cfffd8480129242f605521fca` |
 
 The query-expansion checkpoint uses an IBM base model, but part of its label
 dataset has incomplete generator provenance. See the model-policy discussion
@@ -93,11 +103,11 @@ verified `v<upstream>-sendhil.<revision>` release asset.
 Install the fork first so `pi-memory` discovers this `qmd` executable:
 
 ```sh
-npm install -g https://github.com/sendhil/qmd/releases/download/v2.8.3-sendhil.1/qmd-v2.8.3-sendhil.1.tgz
+npm install -g https://github.com/sendhil/qmd/releases/download/v2.8.3-sendhil.2/qmd-v2.8.3-sendhil.2.tgz
 pi install npm:pi-memory
 ```
 
-The release asset belongs to the policy-protected `v2.8.3-sendhil.1` tag.
+The release asset belongs to the policy-protected `v2.8.3-sendhil.2` tag.
 `pi-memory` creates its `pi-memory` collection automatically. If QMD was
 installed after Pi started, restart Pi or initialize manually:
 
@@ -115,7 +125,7 @@ or disable another memory extension that registers the same tool name.
 
 ```sh
 # Install the verified asset from the policy-protected GitHub release
-npm install -g https://github.com/sendhil/qmd/releases/download/v2.8.3-sendhil.1/qmd-v2.8.3-sendhil.1.tgz
+npm install -g https://github.com/sendhil/qmd/releases/download/v2.8.3-sendhil.2/qmd-v2.8.3-sendhil.2.tgz
 
 # Create collections for your notes, docs, and meeting transcripts
 qmd collection add ~/notes --name notes
@@ -189,11 +199,10 @@ Although the tool works perfectly fine when you just tell your agent to use it o
 }
 ```
 
-**Claude Code** — Install the plugin (recommended):
+**Claude Code** — Install QMD's bundled skill after installing this fork:
 
 ```bash
-claude plugin marketplace add tobi/qmd
-claude plugin install qmd@qmd
+qmd skill install --global --yes
 ```
 
 Or configure MCP manually in `~/.claude/settings.json`:
@@ -292,8 +301,11 @@ Use QMD as a library in your own Node.js or Bun applications.
 #### Installation
 
 ```sh
-npm install @tobilu/qmd
+npm install https://github.com/sendhil/qmd/releases/download/v2.8.3-sendhil.2/qmd-v2.8.3-sendhil.2.tgz
 ```
+
+The fork intentionally keeps QMD's package name, so imports remain
+`@tobilu/qmd`; the release asset above supplies the audited fork bytes.
 
 #### Quick Start
 
@@ -671,20 +683,16 @@ Supported model families:
 
 ## Installation
 
-```sh
-npm install -g @tobilu/qmd
-# or
-bun install -g @tobilu/qmd
-```
+Install the policy-protected fork asset shown above for the CLI. Do not use the
+upstream registry package or upstream Git checkout for a fork-managed QMD
+installation: they can restore different model defaults.
 
 ### Development
 
-```sh
-git clone https://github.com/tobi/qmd
-cd qmd
-npm install
-npm link
-```
+To contribute to this fork, clone `https://github.com/sendhil/qmd`, check out
+`non-chinese-defaults`, and follow
+[`docs/UPSTREAM_MAINTENANCE.md`](docs/UPSTREAM_MAINTENANCE.md). Keep `main` as
+an upstream mirror; do not develop fork changes on it.
 
 ## Usage
 

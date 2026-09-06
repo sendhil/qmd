@@ -153,10 +153,11 @@ GitHub release asset instead.
 
 GitHub's immutable-release setting is not enabled for this repository. Fork
 policy therefore treats every published fork tag and asset as immutable: never
-move or reuse a tag, and never replace or delete its asset. The canonical
-`v2.8.3-sendhil.1` asset is pinned to SHA-256
-`6dc3af845e97fdd9da37ec46b625da8156bf59156d36b880879b2f3bbc6d7dc9`.
-Release verification depends on the hash and byte comparisons below.
+move or reuse a tag, and never replace or delete its asset.
+`v2.8.3-sendhil.1` remains immutable historical evidence. The remediated
+canonical release for this baseline is `v2.8.3-sendhil.2`; record its hash only
+after the exact archive passes the local and public-byte checks below. Release
+verification depends on those hash and byte comparisons.
 
 Run the following only after the full validation suite above passes on the
 committed, rebased HEAD. The sequence pushes that exact validated commit,
@@ -166,7 +167,7 @@ rebuilding, then validates the downloaded release and its public URL:
 ```sh
 set -eu
 
-RELEASE_TAG=v2.8.3-sendhil.1
+RELEASE_TAG=v2.8.3-sendhil.2
 PACKAGE_VERSION=$(node -p 'require("./package.json").version')
 PACKAGE_FILENAME=$(node -p 'const p = require("./package.json"); `${p.name.replace(/^@/, "").replaceAll("/", "-")}-${p.version}.tgz`')
 RELEASE_TAG_PREFIX=v$PACKAGE_VERSION-sendhil.
@@ -196,6 +197,8 @@ test "$(git branch --show-current)" = non-chinese-defaults
 test -z "$(git status --porcelain)"
 git push origin non-chinese-defaults
 test "$(git rev-parse HEAD)" = "$(git rev-parse origin/non-chinese-defaults)"
+PREVIOUS_LATEST_TAG=$(gh api repos/sendhil/qmd/releases/latest --jq .tag_name)
+test -n "$PREVIOUS_LATEST_TAG"
 
 # Prove the canonical tag is unused locally and remotely before mutation.
 test -z "$(git tag --list "$RELEASE_TAG")"
@@ -227,6 +230,13 @@ test "$(git rev-list -n 1 "$RELEASE_TAG")" = "$(git rev-parse HEAD)"
 # the explicit gates above replace that inapplicable check for this fork tag.
 git push --no-verify origin "$RELEASE_TAG"
 gh release create "$RELEASE_TAG" "$RELEASE_PATH" --repo sendhil/qmd --title "$RELEASE_TITLE" --latest=false --notes "Canonical prebuilt sendhil/qmd fork release. Supersedes the historical non-chinese-v2.8.3.x naming."
+
+# GitHub has previously ignored --latest=false for this fork. Restore the
+# release that was latest before this immutable asset was published.
+if test "$(gh api repos/sendhil/qmd/releases/latest --jq .tag_name)" = "$RELEASE_TAG"; then
+  gh release edit "$PREVIOUS_LATEST_TAG" --repo sendhil/qmd --latest
+fi
+test "$(gh api repos/sendhil/qmd/releases/latest --jq .tag_name)" = "$PREVIOUS_LATEST_TAG"
 
 # Download and compare the published bytes before testing the public URL.
 mkdir "$DOWNLOAD_DIR"

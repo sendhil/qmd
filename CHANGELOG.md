@@ -7,6 +7,9 @@
 - Added Oxlint lint fence.
 - Added an opt-in Node-based real-model smoke test and an agent-facing
   upstream-maintenance runbook for the `non-chinese-defaults` branch.
+- Added immutable revision, size, and SHA-256 verification for the three
+  built-in model artifacts. Custom model URIs remain explicit overrides and
+  retain their existing GGUF-only validation.
 
 ### Changed
 
@@ -18,10 +21,10 @@
   collection-relative paths, restoring `pi-memory`'s automatic `/daily` and
   collection-root context setup while preserving unscoped `/` as global.
 - Fork releases now use `v<upstream>-sendhil.<revision>`, resetting the fork
-  revision to `1` for each new upstream baseline. `v2.8.3-sendhil.1` is the
-  canonical release for this baseline; `non-chinese-v2.8.3.1` and
-  `non-chinese-v2.8.3.2` remain policy-protected historical tags and must never
-  be moved or deleted.
+  revision to `1` for each new upstream baseline. `v2.8.3-sendhil.2` is the
+  remediation release for this baseline; `v2.8.3-sendhil.1` and
+  `non-chinese-v2.8.3.1` / `non-chinese-v2.8.3.2` remain policy-protected
+  historical tags and must never be moved or deleted.
 
 ### Fixed
 
@@ -33,6 +36,9 @@
 - Fork tags matching `v*-sendhil.*` are excluded from the upstream npm publish
   workflow so they cannot publish the upstream package or create a competing
   GitHub release if Actions are enabled on the fork.
+- The packaged runtime skill and installation docs now keep fork-managed users
+  on the verified release asset; the upstream-only release script fails closed
+  outside the canonical `tobi/qmd` repository.
 
 ## [2.8.3] - 2026-08-16
 

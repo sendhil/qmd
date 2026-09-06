@@ -1,20 +1,62 @@
 import { describe, expect, test } from "vitest";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 const root = new URL("..", import.meta.url);
 const pkg = JSON.parse(readFileSync(new URL("package.json", root), "utf8"));
 
 describe("package test task", () => {
+  test("ships fork-safe installation guidance and only the runtime QMD skill", () => {
+    const npmCache = mkdtempSync(join(tmpdir(), "qmd-package-test-npm-cache-"));
+    let packed: Array<{ files: Array<{ path: string }> }>;
+    try {
+      packed = JSON.parse(execFileSync(
+        "npm",
+        ["pack", "--dry-run", "--json", "--ignore-scripts"],
+        {
+          cwd: root.pathname,
+          encoding: "utf8",
+          env: { ...process.env, npm_config_cache: npmCache },
+        },
+      ));
+    } finally {
+      rmSync(npmCache, { recursive: true, force: true });
+    }
+    const markdownPaths = packed[0].files
+      .map(({ path }) => path)
+      .filter((path) => path.endsWith(".md"));
+    const packagedMarkdown = markdownPaths
+      .map((path) => readFileSync(new URL(path.replace(/^package\//, ""), root), "utf8"))
+      .join("\n");
+
+    expect(markdownPaths).toContain("skills/qmd/SKILL.md");
+    expect(markdownPaths).not.toContain("skills/release/SKILL.md");
+    expect(packagedMarkdown).not.toMatch(/(?:npm|bun) install -g @tobilu\/qmd/);
+    expect(packagedMarkdown).not.toContain("git clone https://github.com/tobi/qmd");
+    expect(packagedMarkdown).not.toContain("claude plugin marketplace add tobi/qmd");
+  });
+
+  test("routes fork releases away from the upstream release script and publish workflow", () => {
+    const releaseScript = readFileSync(new URL("scripts/release.sh", root), "utf8");
+    const publishWorkflow = readFileSync(new URL(".github/workflows/publish.yml", root), "utf8");
+    const ciWorkflow = readFileSync(new URL(".github/workflows/ci.yml", root), "utf8");
+
+    expect(releaseScript).toContain('UPSTREAM_ORIGIN="https://github.com/tobi/qmd.git"');
+    expect(releaseScript).toContain("docs/UPSTREAM_MAINTENANCE.md");
+    expect(releaseScript).toContain("must be the canonical upstream repository");
+    expect(publishWorkflow).toContain("github.repository == 'tobi/qmd'");
+    expect(ciWorkflow).toContain("branches: [main, non-chinese-defaults]");
+  });
+
   test("recommends the exact canonical prebuilt fork install", () => {
     const readme = readFileSync(new URL("README.md", root), "utf8");
     const releaseUrl =
-      "https://github.com/sendhil/qmd/releases/download/v2.8.3-sendhil.1/qmd-v2.8.3-sendhil.1.tgz";
+      "https://github.com/sendhil/qmd/releases/download/v2.8.3-sendhil.2/qmd-v2.8.3-sendhil.2.tgz";
 
     expect(readme).toContain(`npm install -g ${releaseUrl}`);
-    expect(readme).toContain(
-      "6dc3af845e97fdd9da37ec46b625da8156bf59156d36b880879b2f3bbc6d7dc9",
-    );
+    expect(readme).toContain(".1` remains immutable historical evidence");
   });
 
   test("does not recommend historical release assets", () => {
@@ -91,7 +133,7 @@ describe("package test task", () => {
     );
     const commandBlock = releaseSection.match(/```sh\n([\s\S]*?)\n```/)?.[1] ?? "";
 
-    expect(commandBlock.match(/v2\.8\.3-sendhil\.1/g)).toHaveLength(1);
+    expect(commandBlock.match(/v2\.8\.3-sendhil\.2/g)).toHaveLength(1);
     expect(commandBlock).toMatch(
       /PACKAGE_VERSION=\$\(node -p [^\n]*package\.json/,
     );
@@ -111,6 +153,10 @@ describe("package test task", () => {
     );
     expect(commandBlock).toContain('--title "$RELEASE_TITLE"');
     expect(commandBlock).toContain('"$RELEASE_URL"');
+    expect(commandBlock).toContain(
+      'PREVIOUS_LATEST_TAG=$(gh api repos/sendhil/qmd/releases/latest --jq .tag_name)',
+    );
+    expect(commandBlock).toContain('gh release edit "$PREVIOUS_LATEST_TAG" --repo sendhil/qmd --latest');
   });
 
   test("declares TypeScript directly for Git prepare builds", () => {
@@ -183,7 +229,7 @@ describe("package grammar distribution", () => {
     expect(pkg.files, "published package files").toContain("scripts/check-package-grammars.mjs");
     expect(pkg.files, "published package files").toContain("scripts/package-smoke.mjs");
     expect(pkg.files, "published package files").toContain("scripts/test-all.mjs");
-    expect(pkg.files, "published package files").toContain("skills/");
+    expect(pkg.files, "published package files").toContain("skills/qmd/");
     const qmdSkill = readFileSync(new URL("skills/qmd/SKILL.md", root), "utf8");
     expect(qmdSkill).toContain("# QMD - Query Markdown Documents");
     expect(qmdSkill).toContain("## How search works");

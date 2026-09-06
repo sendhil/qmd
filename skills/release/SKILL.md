@@ -12,6 +12,15 @@ Cut a release, validate the changelog, and ensure git hooks are installed.
 
 `/release 1.0.5` or `/release patch` (bumps patch from current version).
 
+## Fork guard
+
+This skill and `scripts/release.sh` are for the canonical `tobi/qmd`
+repository on `main` only. If the current repository is `sendhil/qmd` or the
+branch is `non-chinese-defaults`, do not run the generic release commands and
+do not push `main`. Follow
+[`docs/UPSTREAM_MAINTENANCE.md`](../../docs/UPSTREAM_MAINTENANCE.md) to build,
+validate, tag, and publish one immutable fork release asset instead.
+
 ## Process
 
 When the user triggers `/release <version>`:

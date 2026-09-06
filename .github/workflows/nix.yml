@@ -2,9 +2,9 @@ name: Nix
 
 on:
   push:
-    branches: [main]
+    branches: [main, non-chinese-defaults]
   pull_request:
-    branches: [main]
+    branches: [main, non-chinese-defaults]
 
 jobs:
   build-flake:
