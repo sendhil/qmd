@@ -1042,8 +1042,38 @@ function detectCollectionFromPath(db: Database, fsPath: string): { collectionNam
   };
 }
 
-async function contextAdd(pathArg: string | undefined, contextText: string): Promise<void> {
+async function contextAdd(
+  pathArg: string | undefined,
+  contextText: string,
+  selectedCollection?: string,
+): Promise<void> {
   const db = getDb();
+
+  // A collection selector makes slash paths collection-relative. This supports
+  // pi-memory's `/daily ... -c pi-memory` syntax while leaving qmd:// paths and
+  // the historical no-collection `/` global-context behavior unchanged.
+  if (selectedCollection && !pathArg?.startsWith("qmd://")) {
+    const collection = getCollectionFromYaml(selectedCollection);
+    if (!collection) {
+      console.error(`${c.yellow}Collection not found: ${selectedCollection}${c.reset}`);
+      closeDb();
+      process.exit(1);
+    }
+
+    const collectionPath = (pathArg ?? "/")
+      .replace(/^\/+/, "")
+      .replace(/\/+$/, "");
+    yamlAddContext(selectedCollection, collectionPath, contextText);
+    resyncConfig();
+
+    const displayPath = collectionPath
+      ? `qmd://${selectedCollection}/${collectionPath}`
+      : `qmd://${selectedCollection}/ (collection root)`;
+    console.log(`${c.green}✓${c.reset} Added context for: ${displayPath}`);
+    console.log(`${c.dim}Context: ${contextText}${c.reset}`);
+    closeDb();
+    return;
+  }
 
   // Handle "/" as global context (applies to all collections)
   if (pathArg === '/') {
@@ -4334,6 +4364,7 @@ if (isMain) {
         console.error("Commands:");
         console.error("  qmd context add [path] \"text\"  - Add context (defaults to current dir)");
         console.error("  qmd context add / \"text\"       - Add global context to all collections");
+        console.error("  qmd context add /path \"text\" -c <collection> - Add collection-relative context");
         console.error("  qmd context list                - List all contexts");
         console.error("  qmd context rm <path>           - Remove context");
         process.exit(1);
@@ -4353,6 +4384,7 @@ if (isMain) {
             console.error("  Using virtual paths:");
             console.error("  qmd context add qmd://journals/ \"Context for entire journals collection\"");
             console.error("  qmd context add qmd://journals/2024 \"Context for 2024 journals\"");
+            console.error("  qmd context add /daily \"Daily logs\" -c journals");
             process.exit(1);
           }
 
@@ -4373,7 +4405,13 @@ if (isMain) {
             contextText = firstArg;
           }
 
-          await contextAdd(pathArg, contextText);
+          const selectedCollections = cli.opts.collection ?? [];
+          if (selectedCollections.length > 1) {
+            console.error("context add accepts only one -c/--collection value");
+            process.exit(1);
+          }
+
+          await contextAdd(pathArg, contextText, selectedCollections[0]);
           break;
         }
 

@@ -13,10 +13,11 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { spawn } from "child_process";
 import { setTimeout as sleep } from "timers/promises";
+import YAML from "yaml";
 import { buildEditorUri, termLink, resolveEmbedModelForCli } from "../src/cli/qmd.ts";
 import { openDatabase } from "../src/db.ts";
 import { DEFAULT_EMBED_MODEL_URI, DEFAULT_GENERATE_MODEL_URI, DEFAULT_RERANK_MODEL_URI } from "../src/llm.ts";
-import { setConfigSource } from "../src/collections.ts";
+import { setConfigSource, type CollectionConfig } from "../src/collections.ts";
 
 // Test fixtures directory and database path
 let testDir: string;
@@ -1530,6 +1531,17 @@ describe("CLI Context Management", () => {
     await runQmd(["collection", "add", "."], { dbPath: localDbPath });
   });
 
+  test("context help documents collection-relative shorthand", async () => {
+    const { stderr, exitCode } = await runQmd(["context"], {
+      dbPath: localDbPath,
+    });
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain(
+      'qmd context add /path "text" -c <collection>',
+    );
+  });
+
   test("add global context with /", async () => {
     const { stdout, exitCode } = await runQmd([
       "context",
@@ -1540,6 +1552,84 @@ describe("CLI Context Management", () => {
     expect(exitCode).toBe(0);
     expect(stdout).toContain("✓ Set global context");
     expect(stdout).toContain("Global system context");
+  });
+
+  test("pi-memory syntax stores /daily inside the selected collection", async () => {
+    const env = await createIsolatedTestEnv("pi-context-daily");
+    const added = await runQmd([
+      "collection",
+      "add",
+      fixturesDir,
+      "--name",
+      "pi-memory",
+    ], env);
+    expect(added.exitCode).toBe(0);
+
+    const { stdout, stderr, exitCode } = await runQmd([
+      "context",
+      "add",
+      "/daily",
+      "Daily append-only work logs organized by date",
+      "-c",
+      "pi-memory",
+    ], env);
+
+    expect(exitCode, stderr).toBe(0);
+    expect(stdout).toContain("qmd://pi-memory/daily");
+    const config = YAML.parse(
+      readFileSync(join(env.configDir, "index.yml"), "utf8"),
+    ) as CollectionConfig;
+    expect(config.collections["pi-memory"]?.context?.daily).toBe(
+      "Daily append-only work logs organized by date",
+    );
+    expect(config.global_context).toBeUndefined();
+  });
+
+  test("pi-memory syntax stores / at the selected collection root", async () => {
+    const env = await createIsolatedTestEnv("pi-context-root");
+    const added = await runQmd([
+      "collection",
+      "add",
+      fixturesDir,
+      "--name",
+      "pi-memory",
+    ], env);
+    expect(added.exitCode).toBe(0);
+
+    const { stdout, stderr, exitCode } = await runQmd([
+      "context",
+      "add",
+      "/",
+      "Curated long-term memory",
+      "-c",
+      "pi-memory",
+    ], env);
+
+    expect(exitCode, stderr).toBe(0);
+    expect(stdout).toContain("qmd://pi-memory/ (collection root)");
+    const config = YAML.parse(
+      readFileSync(join(env.configDir, "index.yml"), "utf8"),
+    ) as CollectionConfig;
+    expect(config.collections["pi-memory"]?.context?.[""]).toBe(
+      "Curated long-term memory",
+    );
+    expect(config.global_context).toBeUndefined();
+  });
+
+  test("context add rejects multiple collection selectors", async () => {
+    const { stderr, exitCode } = await runQmd([
+      "context",
+      "add",
+      "/daily",
+      "Daily context",
+      "-c",
+      "pi-memory",
+      "-c",
+      "other",
+    ], { dbPath: localDbPath });
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toContain("context add accepts only one -c/--collection value");
   });
 
   test("list contexts", async () => {
