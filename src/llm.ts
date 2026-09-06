@@ -11,6 +11,12 @@ import type {
   Token as LlamaToken,
 } from "node-llama-cpp";
 
+type ResolveModelFileOptions = {
+  directory?: string;
+  cli?: boolean;
+  download?: "auto" | false;
+};
+
 type StdoutChunk = string | Uint8Array;
 type WriteCallback = (err?: Error | null) => void;
 
@@ -19,7 +25,7 @@ type NodeLlamaCppModule = {
   getLlamaGpuTypes?: (include?: "supported" | "allValid") => Promise<LlamaGpuMode[]>;
   resolveModelFile: (
     model: string,
-    optionsOrDirectory?: string | { directory?: string; cli?: boolean },
+    optionsOrDirectory?: string | ResolveModelFileOptions,
   ) => Promise<string>;
   LlamaChatSession: new (options: {
     contextSequence: unknown;
@@ -79,8 +85,9 @@ export async function withNativeStdoutRedirectedToStderr<T>(fn: () => Promise<T>
 
 import { homedir } from "os";
 import { dirname, join } from "path";
-import { accessSync, constants, existsSync, mkdirSync, statSync, unlinkSync, readdirSync, readFileSync, writeFileSync, openSync, readSync, closeSync } from "fs";
+import { accessSync, constants, createReadStream, existsSync, mkdirSync, statSync, unlinkSync, readdirSync, readFileSync, writeFileSync, openSync, readSync, closeSync } from "fs";
 import { createRequire } from "node:module";
+import { createHash } from "node:crypto";
 import { resolveQueryExpansionProfile } from "./query-expansion-profile.js";
 
 // =============================================================================
@@ -280,14 +287,77 @@ export type RerankDocument = {
 // Model Configuration
 // =============================================================================
 
-// HuggingFace model URIs for node-llama-cpp
-// Format: hf:<user>/<repo>/<file>
+// HuggingFace model URIs for node-llama-cpp.
+// Built-ins are tied to immutable Hugging Face commits with `#<revision>`.
 // Override via QMD_EMBED_MODEL env var (e.g. hf:Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf)
-const DEFAULT_EMBED_MODEL = "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf";
-const DEFAULT_RERANK_MODEL =
-  "hf:ggml-org/jina-reranker-v1-turbo-en-GGUF/Jina-Bert-Implementation-38M-F16.gguf";
-const DEFAULT_GENERATE_MODEL =
-  "hf:nichenke/qmd-query-expansion-granite-2b-grpo-gguf/qmd-query-expansion-granite-2b-grpo-q4_k_m.gguf";
+export type BuiltinModelRole = "embed" | "generate" | "rerank";
+
+export type BuiltinModelSpec = Readonly<{
+  role: BuiltinModelRole;
+  /** Exact historical default accepted as a one-time compatibility alias. */
+  logicalUri: string;
+  /** Immutable node-llama-cpp Hugging Face URI (`#`, never `@`). */
+  uri: string;
+  sizeBytes: number;
+  sha256: string;
+}>;
+
+/**
+ * The only models QMD treats as built-in. A built-in has both an immutable
+ * source revision and an artifact digest; all other URIs remain user-owned
+ * overrides and retain the existing GGUF-only validation behavior.
+ */
+export const BUILTIN_MODEL_MANIFEST = {
+  embed: {
+    role: "embed",
+    logicalUri: "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf",
+    uri: "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf#0f741b5a6585bd53aeb15cd1372c56f2a0f65e12",
+    sizeBytes: 333590944,
+    sha256: "b5ce9d77a3fc4b3b39ccb5643c36777911cc4eb46a66962eadfa3f5f60490d63",
+  },
+  generate: {
+    role: "generate",
+    logicalUri: "hf:nichenke/qmd-query-expansion-granite-2b-grpo-gguf/qmd-query-expansion-granite-2b-grpo-q4_k_m.gguf",
+    uri: "hf:nichenke/qmd-query-expansion-granite-2b-grpo-gguf/qmd-query-expansion-granite-2b-grpo-q4_k_m.gguf#449c09bced7605802af16c2b431fd40e5e871b8c",
+    sizeBytes: 1545302752,
+    sha256: "a488061ddcf8ee3e18912cd29cb33cbe6396084946de75544650ac5620e5b6ed",
+  },
+  rerank: {
+    role: "rerank",
+    logicalUri: "hf:ggml-org/jina-reranker-v1-turbo-en-GGUF/Jina-Bert-Implementation-38M-F16.gguf",
+    uri: "hf:ggml-org/jina-reranker-v1-turbo-en-GGUF/Jina-Bert-Implementation-38M-F16.gguf#8582fa8560bcdd3c5cbc9015514edff0f3b1871f",
+    sizeBytes: 76971168,
+    sha256: "71abc010bb3dce97812ee971509a5cb6ff6f6b8cfffd8480129242f605521fca",
+  },
+} as const satisfies Readonly<Record<BuiltinModelRole, BuiltinModelSpec>>;
+
+const builtinModelSpecs = Object.values(BUILTIN_MODEL_MANIFEST);
+
+function builtinSpecsForRole(role?: BuiltinModelRole): readonly BuiltinModelSpec[] {
+  return role ? [BUILTIN_MODEL_MANIFEST[role]] : builtinModelSpecs;
+}
+
+/**
+ * Translate only the exact legacy default for the selected role. A URI that
+ * happens to have been a historical default in a *different* role remains an
+ * explicit user override, rather than silently changing its bytes or trust
+ * class. Role-less public operations preserve the supplied URI literally.
+ */
+export function canonicalizeBuiltinModelUri(modelUri: string, role?: BuiltinModelRole): string {
+  if (!role) return modelUri;
+  return builtinSpecsForRole(role).find(spec => spec.logicalUri === modelUri || spec.uri === modelUri)?.uri ?? modelUri;
+}
+
+export function getBuiltinModelSpec(modelUri: string, role?: BuiltinModelRole): BuiltinModelSpec | undefined {
+  // A canonical pin is always an audited artifact. A floating alias becomes
+  // one only in a role-aware config/runtime flow where migration is explicit.
+  const canonicalUri = role ? canonicalizeBuiltinModelUri(modelUri, role) : modelUri;
+  return builtinSpecsForRole(role).find(spec => spec.uri === canonicalUri);
+}
+
+const DEFAULT_EMBED_MODEL = BUILTIN_MODEL_MANIFEST.embed.uri;
+const DEFAULT_RERANK_MODEL = BUILTIN_MODEL_MANIFEST.rerank.uri;
+const DEFAULT_GENERATE_MODEL = BUILTIN_MODEL_MANIFEST.generate.uri;
 
 // Alternative generation models for query expansion:
 // LiquidAI LFM2 - hybrid architecture optimized for edge/on-device inference
@@ -306,15 +376,15 @@ export type ModelResolutionConfig = {
 };
 
 export function resolveEmbedModel(config?: ModelResolutionConfig): string {
-  return config?.embed || process.env.QMD_EMBED_MODEL || DEFAULT_EMBED_MODEL;
+  return canonicalizeBuiltinModelUri(config?.embed || process.env.QMD_EMBED_MODEL || DEFAULT_EMBED_MODEL, "embed");
 }
 
 export function resolveGenerateModel(config?: ModelResolutionConfig): string {
-  return config?.generate || process.env.QMD_GENERATE_MODEL || DEFAULT_GENERATE_MODEL;
+  return canonicalizeBuiltinModelUri(config?.generate || process.env.QMD_GENERATE_MODEL || DEFAULT_GENERATE_MODEL, "generate");
 }
 
 export function resolveRerankModel(config?: ModelResolutionConfig): string {
-  return config?.rerank || process.env.QMD_RERANK_MODEL || DEFAULT_RERANK_MODEL;
+  return canonicalizeBuiltinModelUri(config?.rerank || process.env.QMD_RERANK_MODEL || DEFAULT_RERANK_MODEL, "rerank");
 }
 
 export function resolveModels(config?: ModelResolutionConfig): Required<ModelResolutionConfig> {
@@ -341,20 +411,24 @@ export type PullResult = {
 type HfRef = {
   repo: string;
   file: string;
+  revision?: string;
 };
 
 function parseHfUri(model: string): HfRef | null {
   if (!model.startsWith("hf:")) return null;
   const without = model.slice(3);
-  const parts = without.split("/");
+  const hashIndex = without.indexOf("#");
+  const withoutRevision = hashIndex >= 0 ? without.slice(0, hashIndex) : without;
+  const revision = hashIndex >= 0 ? without.slice(hashIndex + 1) : undefined;
+  const parts = withoutRevision.split("/");
   if (parts.length < 3) return null;
   const repo = parts.slice(0, 2).join("/");
   const file = parts.slice(2).join("/");
-  return { repo, file };
+  return { repo, file, ...(revision ? { revision } : {}) };
 }
 
 async function getRemoteEtag(ref: HfRef): Promise<string | null> {
-  const url = `https://huggingface.co/${ref.repo}/resolve/main/${ref.file}`;
+  const url = `https://huggingface.co/${ref.repo}/resolve/${ref.revision ?? "main"}/${ref.file}`;
   try {
     const resp = await fetch(url, { method: "HEAD" });
     if (!resp.ok) return null;
@@ -370,9 +444,10 @@ const GGUF_MAGIC = Buffer.from("GGUF");
 export type GgufFileInspection = {
   exists: boolean;
   valid: boolean;
-  kind: "missing" | "gguf" | "html" | "invalid";
+  kind: "missing" | "gguf" | "html" | "invalid" | "size" | "checksum";
   sizeBytes?: number;
   magic?: string;
+  sha256?: string;
   details: string;
 };
 
@@ -450,19 +525,92 @@ export function inspectGgufFile(filePath: string): GgufFileInspection {
   }
 }
 
+export type ModelIntegrityExpectation = Pick<BuiltinModelSpec, "sizeBytes" | "sha256">;
+
+async function hashFileSha256(filePath: string): Promise<string> {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(filePath)) {
+    hash.update(chunk);
+  }
+  return hash.digest("hex");
+}
+
+/**
+ * Inspect a GGUF and, when an integrity expectation is supplied, verify its
+ * exact byte size and stream its SHA-256. This deliberately does not trust an
+ * HTTP ETag: Hugging Face/CDN ETags are freshness metadata, not artifact proof.
+ */
+export async function inspectGgufModelFile(
+  filePath: string,
+  integrity?: ModelIntegrityExpectation,
+): Promise<GgufFileInspection> {
+  const inspection = inspectGgufFile(filePath);
+  if (!inspection.valid || !integrity) return inspection;
+
+  if (inspection.sizeBytes !== integrity.sizeBytes) {
+    return {
+      ...inspection,
+      valid: false,
+      kind: "size",
+      details: `size mismatch (expected ${integrity.sizeBytes} bytes, got ${inspection.sizeBytes ?? 0} bytes)`,
+    };
+  }
+
+  try {
+    const sha256 = await hashFileSha256(filePath);
+    if (sha256 !== integrity.sha256) {
+      return {
+        ...inspection,
+        valid: false,
+        kind: "checksum",
+        sha256,
+        details: `SHA-256 mismatch (expected ${integrity.sha256}, got ${sha256})`,
+      };
+    }
+    return {
+      ...inspection,
+      sha256,
+      details: `${inspection.details}; SHA-256 verified`,
+    };
+  } catch (error) {
+    return {
+      ...inspection,
+      valid: false,
+      kind: "invalid",
+      details: `cannot hash model file: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
 /**
  * Validate that a file is actually a GGUF model, not an HTML error page
  * from a proxy, firewall, or failed download.
  * Throws a descriptive error if the file is not valid GGUF.
  */
-function validateGgufFile(filePath: string, modelUri: string): void {
-  const inspection = inspectGgufFile(filePath);
+async function validateGgufFile(
+  filePath: string,
+  modelUri: string,
+  role?: BuiltinModelRole,
+): Promise<void> {
+  const builtin = getBuiltinModelSpec(modelUri, role);
+  const inspection = await inspectGgufModelFile(filePath, builtin);
   if (!inspection.exists || inspection.valid) return; // let downstream handle missing files
 
-  // Remove the bad file so the next attempt re-downloads
+  // This path came from the exact URI-specific resolver. Do not scan or remove
+  // name-similar cache entries: a mismatch must not damage user overrides or a
+  // different pinned revision.
   try {
     unlinkSync(filePath);
   } catch { /* best effort */ }
+
+  if (builtin && (inspection.kind === "size" || inspection.kind === "checksum")) {
+    throw new Error(
+      `Built-in model integrity check failed: ${inspection.details}.\n` +
+      `Model: ${builtin.uri}\n` +
+      `Path:  ${filePath}\n\n` +
+      `The mismatched file has been removed. Run the command again to download the pinned artifact.`,
+    );
+  }
 
   if (inspection.kind === "html") {
     throw new Error(
@@ -497,8 +645,99 @@ function resolveModelFileArgs(cacheDir: string, cli = false): { directory: strin
   return { directory: cacheDir, cli };
 }
 
+function resolveCachedModelFileArgs(cacheDir: string): ResolveModelFileOptions {
+  return { directory: cacheDir, cli: false, download: false };
+}
+
+/** Locate the exact node-llama-cpp cache entry for any `hf:` URI, including `#revision`. */
+export async function findCachedHfModelPath(
+  modelUri: string,
+  cacheDir: string = MODEL_CACHE_DIR,
+): Promise<string | null> {
+  if (!parseHfUri(modelUri)) return null;
+  try {
+    const { resolveModelFile } = await loadNodeLlamaCpp();
+    const path = await resolveModelFile(modelUri, resolveCachedModelFileArgs(cacheDir));
+    return existsSync(path) ? path : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Locate only the node-llama-cpp cache entry for an exact built-in revision. */
+export async function findCachedBuiltinModelPath(
+  modelUri: string,
+  cacheDir: string = MODEL_CACHE_DIR,
+): Promise<string | null> {
+  const builtin = getBuiltinModelSpec(modelUri);
+  if (!builtin) return null;
+  return await findCachedHfModelPath(builtin.uri, cacheDir);
+}
+
+export type CachedBuiltinModelInspection = {
+  path: string | null;
+  inspection: GgufFileInspection | null;
+};
+
+/** Resolve the exact revision cache target used by node-llama-cpp, then hash it for doctor. */
+export async function inspectCachedBuiltinModel(
+  modelUri: string,
+  cacheDir: string = MODEL_CACHE_DIR,
+): Promise<CachedBuiltinModelInspection> {
+  const builtin = getBuiltinModelSpec(modelUri);
+  if (!builtin) return { path: null, inspection: null };
+
+  const path = await findCachedBuiltinModelPath(builtin.uri, cacheDir);
+  if (!path) return { path: null, inspection: null };
+  return { path, inspection: await inspectGgufModelFile(path, builtin) };
+}
+
+async function resolveBuiltinModelFile(
+  builtin: BuiltinModelSpec,
+  cacheDir: string,
+  cli = false,
+): Promise<string> {
+  const cachedPath = await findCachedBuiltinModelPath(builtin.uri, cacheDir);
+  if (cachedPath) {
+    try {
+      await validateGgufFile(cachedPath, builtin.uri);
+      return cachedPath;
+    } catch {
+      // Validation removes only `cachedPath`; use the immutable URI to obtain
+      // a replacement. A mismatch in that fresh download still throws below.
+    }
+  }
+
+  const { resolveModelFile } = await loadNodeLlamaCpp();
+  const downloadedPath = await resolveModelFile(builtin.uri, resolveModelFileArgs(cacheDir, cli));
+  await validateGgufFile(downloadedPath, builtin.uri);
+  return downloadedPath;
+}
+
+/** Shared runtime/pull resolver. Built-ins are hash-checked; overrides are not. */
+async function resolveAndValidateModelFile(
+  modelUri: string,
+  cacheDir: string,
+  cli = false,
+  role?: BuiltinModelRole,
+): Promise<string> {
+  const canonicalUri = canonicalizeBuiltinModelUri(modelUri, role);
+  const builtin = getBuiltinModelSpec(canonicalUri, role);
+  if (builtin) return await resolveBuiltinModelFile(builtin, cacheDir, cli);
+
+  const { resolveModelFile } = await loadNodeLlamaCpp();
+  const path = await resolveModelFile(canonicalUri, resolveModelFileArgs(cacheDir, cli));
+  await validateGgufFile(path, canonicalUri, role);
+  return path;
+}
+
+export type PullModelRequest = string | Readonly<{
+  uri: string;
+  role: BuiltinModelRole;
+}>;
+
 export async function pullModels(
-  models: string[],
+  models: PullModelRequest[],
   options: { refresh?: boolean; cacheDir?: string; cli?: boolean } = {}
 ): Promise<PullResult[]> {
   const cacheDir = options.cacheDir || MODEL_CACHE_DIR;
@@ -507,32 +746,69 @@ export async function pullModels(
   }
 
   const results: PullResult[] = [];
-  for (const model of models) {
+  for (const request of models) {
+    const requestedModel = typeof request === "string" ? request : request.uri;
+    const role = typeof request === "string" ? undefined : request.role;
+    const model = canonicalizeBuiltinModelUri(requestedModel, role);
+    const builtin = getBuiltinModelSpec(model, role);
     let refreshed = false;
+
+    if (builtin) {
+      // Immutable revisions are cache-addressed by node-llama-cpp itself. Do
+      // not use mutable HEAD/ETag freshness checks, and never remove a
+      // filename-substring match belonging to another revision or override.
+      if (options.refresh) {
+        const cachedPath = await findCachedBuiltinModelPath(builtin.uri, cacheDir);
+        if (cachedPath) {
+          unlinkSync(cachedPath);
+          refreshed = true;
+        }
+      }
+
+      const path = await resolveAndValidateModelFile(builtin.uri, cacheDir, options.cli === true, role);
+      const sizeBytes = existsSync(path) ? statSync(path).size : 0;
+      results.push({ model: builtin.uri, path, sizeBytes, refreshed });
+      continue;
+    }
+
     const hfRef = parseHfUri(model);
-    const filename = model.split("/").pop();
-    const entries = readdirSync(cacheDir, { withFileTypes: true });
-    const cached = filename
-      ? entries
-          .filter((entry) => entry.isFile() && entry.name.includes(filename))
-          .map((entry) => join(cacheDir, entry.name))
-      : [];
+    const filename = hfRef?.file.split("/").pop() ?? model.split("/").pop();
+    const hfCachePath = hfRef
+      ? await findCachedHfModelPath(model, cacheDir)
+      : null;
+    const entries = hfRef ? [] : readdirSync(cacheDir, { withFileTypes: true });
+    const cached = hfRef
+      ? hfCachePath ? [hfCachePath] : []
+      : filename
+        ? entries
+            .filter((entry) => entry.isFile() && entry.name.includes(filename))
+            .map((entry) => join(cacheDir, entry.name))
+        : [];
 
     if (hfRef && filename) {
-      const etagPath = join(cacheDir, `${filename}.etag`);
-      const remoteEtag = await getRemoteEtag(hfRef);
-      const localEtag = existsSync(etagPath)
-        ? readFileSync(etagPath, "utf-8").trim()
-        : null;
-      const shouldRefresh =
-        options.refresh || !remoteEtag || remoteEtag !== localEtag || cached.length === 0;
-
-      if (shouldRefresh) {
-        for (const candidate of cached) {
-          if (existsSync(candidate)) unlinkSync(candidate);
+      if (hfRef.revision) {
+        // An explicit revision has an exact node-llama-cpp cache identity.
+        // Do not run mutable ETag freshness logic or delete sibling revisions.
+        if (options.refresh && hfCachePath) {
+          unlinkSync(hfCachePath);
+          refreshed = true;
         }
-        if (existsSync(etagPath)) unlinkSync(etagPath);
-        refreshed = cached.length > 0;
+      } else {
+        const etagPath = join(cacheDir, `${filename}.etag`);
+        const remoteEtag = await getRemoteEtag(hfRef);
+        const localEtag = existsSync(etagPath)
+          ? readFileSync(etagPath, "utf-8").trim()
+          : null;
+        const shouldRefresh =
+          options.refresh || !remoteEtag || remoteEtag !== localEtag || cached.length === 0;
+
+        if (shouldRefresh) {
+          for (const candidate of cached) {
+            if (existsSync(candidate)) unlinkSync(candidate);
+          }
+          if (existsSync(etagPath)) unlinkSync(etagPath);
+          refreshed = cached.length > 0;
+        }
       }
     } else if (options.refresh && filename) {
       for (const candidate of cached) {
@@ -541,11 +817,9 @@ export async function pullModels(
       }
     }
 
-    const { resolveModelFile } = await loadNodeLlamaCpp();
-    const path = await resolveModelFile(model, resolveModelFileArgs(cacheDir, options.cli === true));
-    validateGgufFile(path, model);
+    const path = await resolveAndValidateModelFile(model, cacheDir, options.cli === true, role);
     const sizeBytes = existsSync(path) ? statSync(path).size : 0;
-    if (hfRef && filename) {
+    if (hfRef && filename && !hfRef.revision) {
       const remoteEtag = await getRemoteEtag(hfRef);
       if (remoteEtag) {
         const etagPath = join(cacheDir, `${filename}.etag`);
@@ -1100,13 +1374,9 @@ export class LlamaCpp implements LLM {
    * Validates the downloaded file is actually a GGUF model (not an HTML error page
    * from a proxy or firewall).
    */
-  private async resolveModel(modelUri: string): Promise<string> {
+  private async resolveModel(modelUri: string, role?: BuiltinModelRole): Promise<string> {
     this.ensureModelCacheDir();
-    // resolveModelFile handles HF URIs and downloads to the cache dir
-    const { resolveModelFile } = await loadNodeLlamaCpp();
-    const modelPath = await resolveModelFile(modelUri, resolveModelFileArgs(this.modelCacheDir));
-    validateGgufFile(modelPath, modelUri);
-    return modelPath;
+    return await resolveAndValidateModelFile(modelUri, this.modelCacheDir, false, role);
   }
 
   /**
@@ -1122,7 +1392,7 @@ export class LlamaCpp implements LLM {
 
     this.embedModelLoadPromise = (async () => {
       const llama = await this.ensureLlama();
-      const modelPath = await this.resolveModel(this.embedModelUri);
+      const modelPath = await this.resolveModel(this.embedModelUri, "embed");
       const model = await llama.loadModel(this.modelLoadOptions(modelPath));
       this.embedModel = model;
       this.embedModelPath = modelPath;
@@ -1254,7 +1524,7 @@ export class LlamaCpp implements LLM {
 
       this.generateModelLoadPromise = (async () => {
         const llama = await this.ensureLlama();
-        const modelPath = await this.resolveModel(this.generateModelUri);
+        const modelPath = await this.resolveModel(this.generateModelUri, "generate");
         const model = await llama.loadModel(this.modelLoadOptions(modelPath));
         this.generateModel = model;
         return model;
@@ -1286,7 +1556,7 @@ export class LlamaCpp implements LLM {
 
     this.rerankModelLoadPromise = (async () => {
       const llama = await this.ensureLlama();
-      const modelPath = await this.resolveModel(this.rerankModelUri);
+      const modelPath = await this.resolveModel(this.rerankModelUri, "rerank");
       const model = await llama.loadModel(this.modelLoadOptions(modelPath));
       this.rerankModel = model;
       // Model loading counts as activity - ping to keep alive

@@ -22,6 +22,7 @@ import { createHash } from "crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "path";
 import { getConfigDir } from "./collections.js";
+import { canonicalizeBuiltinModelUri } from "./llm.js";
 import { qmdHomedir } from "./paths.js";
 
 /** A collection's pre-update hook, as it will be executed. */
@@ -140,8 +141,9 @@ export function gatedModels(
   for (const slot of ["embed", "rerank", "generate"] as const) {
     const uri = models[slot];
     if (!uri) continue;
-    if (uri === builtins[slot]) continue;
-    out.push({ slot, uri });
+    const canonicalUri = canonicalizeBuiltinModelUri(uri, slot);
+    if (canonicalUri === canonicalizeBuiltinModelUri(builtins[slot], slot)) continue;
+    out.push({ slot, uri: canonicalUri });
   }
   return out;
 }

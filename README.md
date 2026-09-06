@@ -641,7 +641,11 @@ QMD uses three local GGUF models (auto-downloaded on first use):
 | `Jina-Bert-Implementation-38M-F16` | Re-ranking | ~73 MiB |
 | `qmd-query-expansion-granite-2b-grpo-q4_k_m` | Query expansion (fine-tuned) | ~1.4 GiB |
 
-Models are downloaded from HuggingFace and cached in `~/.cache/qmd/models/`.
+The built-in artifacts are revision-pinned and QMD verifies their byte size,
+GGUF magic, and SHA-256 whenever it reuses, downloads, loads, pulls, or
+diagnoses their cache entries. Models are cached in `~/.cache/qmd/models/`.
+Custom URI and local-path overrides remain explicit user choices; QMD checks
+their GGUF format but does not apply the built-in artifact checksums to them.
 
 ### Custom Embedding Model
 
@@ -806,9 +810,9 @@ editor_uri: "vscode://file{path}:{line}:{col}"
 # built-in defaults. `qmd init` writes this block pre-filled with the
 # resolved defaults. See "Model Configuration" for the default URIs.
 models:
-  embed: "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf"
-  rerank: "hf:ggml-org/jina-reranker-v1-turbo-en-GGUF/Jina-Bert-Implementation-38M-F16.gguf"
-  generate: "hf:nichenke/qmd-query-expansion-granite-2b-grpo-gguf/qmd-query-expansion-granite-2b-grpo-q4_k_m.gguf"
+  embed: "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf#0f741b5a6585bd53aeb15cd1372c56f2a0f65e12"
+  rerank: "hf:ggml-org/jina-reranker-v1-turbo-en-GGUF/Jina-Bert-Implementation-38M-F16.gguf#8582fa8560bcdd3c5cbc9015514edff0f3b1871f"
+  generate: "hf:nichenke/qmd-query-expansion-granite-2b-grpo-gguf/qmd-query-expansion-granite-2b-grpo-q4_k_m.gguf#449c09bced7605802af16c2b431fd40e5e871b8c"
 
 # One entry per collection. The key is the collection name.
 collections:
@@ -1346,13 +1350,19 @@ Query ──► LLM Expansion ──► [Original, Variant 1, Variant 2]
 
 ## Model Configuration
 
-The default models are defined in `src/llm.ts` as Hugging Face URIs:
+The built-in manifest in `src/llm.ts` uses immutable node-llama-cpp Hugging
+Face URIs (`#<40-hex revision>`, never `@<revision>`):
 
 ```typescript
-const DEFAULT_EMBED_MODEL = "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf";
-const DEFAULT_RERANK_MODEL = "hf:ggml-org/jina-reranker-v1-turbo-en-GGUF/Jina-Bert-Implementation-38M-F16.gguf";
-const DEFAULT_GENERATE_MODEL = "hf:nichenke/qmd-query-expansion-granite-2b-grpo-gguf/qmd-query-expansion-granite-2b-grpo-q4_k_m.gguf";
+const DEFAULT_EMBED_MODEL = "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf#0f741b5a6585bd53aeb15cd1372c56f2a0f65e12";
+const DEFAULT_RERANK_MODEL = "hf:ggml-org/jina-reranker-v1-turbo-en-GGUF/Jina-Bert-Implementation-38M-F16.gguf#8582fa8560bcdd3c5cbc9015514edff0f3b1871f";
+const DEFAULT_GENERATE_MODEL = "hf:nichenke/qmd-query-expansion-granite-2b-grpo-gguf/qmd-query-expansion-granite-2b-grpo-q4_k_m.gguf#449c09bced7605802af16c2b431fd40e5e871b8c";
 ```
+
+QMD transparently upgrades the exact former floating default for its matching
+role to these pinned forms before applying config or trust rules. That changes
+the default embedding identity once, so existing vectors safely re-embed under
+the audited artifact.
 
 Override any role without changing source through the `models:` block in
 `index.yml` (see [Configuring `index.yml`](#configuring-indexyml)) or with

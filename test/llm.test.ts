@@ -8,7 +8,8 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll, vi } from "vitest";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import { createHash } from "crypto";
 import { tmpdir } from "os";
 import { join } from "path";
 import {
@@ -29,6 +30,10 @@ import {
   DEFAULT_EMBED_MODEL_URI,
   DEFAULT_GENERATE_MODEL_URI,
   DEFAULT_RERANK_MODEL_URI,
+  BUILTIN_MODEL_MANIFEST,
+  findCachedBuiltinModelPath,
+  inspectGgufModelFile,
+  inspectCachedBuiltinModel,
   resolveEmbedModel,
   resolveGenerateModel,
   resolveRerankModel,
@@ -165,6 +170,274 @@ describe("model download progress (#776)", () => {
         "local-model.gguf",
         { directory: cacheDir, cli: false },
       );
+    } finally {
+      setNodeLlamaCppModuleForTest(null);
+      rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("pinned built-in model integrity", () => {
+  function tinyGguf(payload = "fixture"): Buffer {
+    return Buffer.concat([Buffer.from("GGUF"), Buffer.from(payload)]);
+  }
+
+  test("accepts a cached GGUF whose declared size and SHA-256 match", async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), "qmd-model-integrity-good-"));
+    const path = join(cacheDir, "model.gguf");
+    const bytes = tinyGguf();
+    writeFileSync(path, bytes);
+
+    try {
+      const inspection = await inspectGgufModelFile(path, {
+        sizeBytes: bytes.byteLength,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+      });
+      expect(inspection.valid).toBe(true);
+      expect(inspection.kind).toBe("gguf");
+    } finally {
+      rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects a valid-GGUF cache whose SHA-256 does not match", async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), "qmd-model-integrity-bad-"));
+    const path = join(cacheDir, "model.gguf");
+    const bytes = tinyGguf("wrong-hash");
+    writeFileSync(path, bytes);
+
+    try {
+      const inspection = await inspectGgufModelFile(path, {
+        sizeBytes: bytes.byteLength,
+        sha256: "0".repeat(64),
+      });
+      expect(inspection.valid).toBe(false);
+      expect(inspection.kind).toBe("checksum");
+      expect(inspection.details).toContain("SHA-256 mismatch");
+    } finally {
+      rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  test("passes a pinned built-in URI to node-llama-cpp and removes a mismatched download", async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), "qmd-model-pinned-download-"));
+    const downloadedPath = join(cacheDir, "revision-cache.gguf");
+    const resolveModelFile = vi.fn(async (model: string, options?: { download?: false }) => {
+      expect(model).toBe(DEFAULT_EMBED_MODEL_URI);
+      if (options?.download === false) throw new Error("cache missing");
+      writeFileSync(downloadedPath, tinyGguf("untrusted"));
+      return downloadedPath;
+    });
+    setNodeLlamaCppModuleForTest({
+      LlamaLogLevel: { error: "error" },
+      resolveModelFile,
+      LlamaChatSession: vi.fn() as any,
+      getLlama: vi.fn(),
+    });
+
+    try {
+      const llm = new LlamaCpp({ modelCacheDir: cacheDir });
+      await expect((llm as any).resolveModel(BUILTIN_MODEL_MANIFEST.embed.logicalUri, "embed")).rejects.toThrow("integrity check failed");
+      expect(resolveModelFile).toHaveBeenCalledWith(
+        DEFAULT_EMBED_MODEL_URI,
+        { directory: cacheDir, cli: false },
+      );
+      expect(existsSync(downloadedPath)).toBe(false);
+    } finally {
+      setNodeLlamaCppModuleForTest(null);
+      rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  test("does not apply a built-in checksum to an arbitrary override", async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), "qmd-model-custom-override-"));
+    const customPath = join(cacheDir, "custom.gguf");
+    writeFileSync(customPath, tinyGguf("custom"));
+    const resolveModelFile = vi.fn(async () => customPath);
+    setNodeLlamaCppModuleForTest({
+      LlamaLogLevel: { error: "error" },
+      resolveModelFile,
+      LlamaChatSession: vi.fn() as any,
+      getLlama: vi.fn(),
+    });
+
+    try {
+      const llm = new LlamaCpp({ modelCacheDir: cacheDir });
+      await expect((llm as any).resolveModel("hf:example/custom/model.gguf")).resolves.toBe(customPath);
+      expect(resolveModelFile).toHaveBeenCalledWith(
+        "hf:example/custom/model.gguf",
+        { directory: cacheDir, cli: false },
+      );
+    } finally {
+      setNodeLlamaCppModuleForTest(null);
+      rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps a revision-pinned custom override isolated during pull refresh", async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), "qmd-model-custom-revision-"));
+    const customUri = "hf:example/custom/model.gguf#0123456789abcdef0123456789abcdef01234567";
+    const revisionPath = join(cacheDir, "hf_example_custom_0123456789abcdef0123456789abcdef01234567_model.gguf");
+    const adjacentRevisionPath = join(cacheDir, "hf_example_custom_other-revision_model.gguf");
+    writeFileSync(revisionPath, tinyGguf("old-cache"));
+    writeFileSync(adjacentRevisionPath, tinyGguf("must-stay"));
+    const resolveModelFile = vi.fn(async (_model: string, options?: { download?: false }) => {
+      if (options?.download === false) return revisionPath;
+      writeFileSync(revisionPath, tinyGguf("refreshed"));
+      return revisionPath;
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      throw new Error("revision-pinned custom pull must not use mutable ETag checks");
+    });
+    setNodeLlamaCppModuleForTest({
+      LlamaLogLevel: { error: "error" },
+      resolveModelFile,
+      LlamaChatSession: vi.fn() as any,
+      getLlama: vi.fn(),
+    });
+
+    try {
+      await expect(pullModels([customUri], { cacheDir, refresh: true })).resolves.toEqual([
+        expect.objectContaining({ model: customUri, path: revisionPath, refreshed: true }),
+      ]);
+      expect(existsSync(adjacentRevisionPath)).toBe(true);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+      setNodeLlamaCppModuleForTest(null);
+      rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps a roleless historical URI as a direct pull override", async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), "qmd-model-roleless-legacy-"));
+    const legacyUri = BUILTIN_MODEL_MANIFEST.embed.logicalUri;
+    const customPath = join(cacheDir, "legacy-model.gguf");
+    const resolveModelFile = vi.fn(async (model: string) => {
+      expect(model).toBe(legacyUri);
+      writeFileSync(customPath, tinyGguf("explicit-direct-pull"));
+      return customPath;
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      throw new Error("offline test");
+    });
+    setNodeLlamaCppModuleForTest({
+      LlamaLogLevel: { error: "error" },
+      resolveModelFile,
+      LlamaChatSession: vi.fn() as any,
+      getLlama: vi.fn(),
+    });
+
+    try {
+      await expect(pullModels([legacyUri], { cacheDir })).resolves.toEqual([
+        expect.objectContaining({ model: legacyUri, path: customPath }),
+      ]);
+    } finally {
+      fetchSpy.mockRestore();
+      setNodeLlamaCppModuleForTest(null);
+      rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  test("does not delete a pinned sibling while refreshing an unpinned custom override", async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), "qmd-model-unpinned-custom-"));
+    const customUri = BUILTIN_MODEL_MANIFEST.embed.logicalUri;
+    const customCachePath = join(cacheDir, "hf_ggml-org_embeddinggemma-300M-GGUF_embeddinggemma-300M-Q8_0.gguf");
+    const builtInCachePath = join(cacheDir, "hf_ggml-org_embeddinggemma-300M-GGUF_0f741b5a6585bd53aeb15cd1372c56f2a0f65e12_embeddinggemma-300M-Q8_0.gguf");
+    writeFileSync(customCachePath, tinyGguf("custom-old-cache"));
+    writeFileSync(builtInCachePath, tinyGguf("pinned-must-stay"));
+    const resolveModelFile = vi.fn(async (model: string, options?: { download?: false }) => {
+      expect(model).toBe(customUri);
+      if (options?.download === false) return customCachePath;
+      writeFileSync(customCachePath, tinyGguf("custom-refreshed"));
+      return customCachePath;
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      throw new Error("offline test");
+    });
+    setNodeLlamaCppModuleForTest({
+      LlamaLogLevel: { error: "error" },
+      resolveModelFile,
+      LlamaChatSession: vi.fn() as any,
+      getLlama: vi.fn(),
+    });
+
+    try {
+      await expect(pullModels([{ uri: customUri, role: "generate" }], { cacheDir, refresh: true })).resolves.toEqual([
+        expect.objectContaining({ model: customUri, path: customCachePath, refreshed: true }),
+      ]);
+      expect(existsSync(builtInCachePath)).toBe(true);
+    } finally {
+      fetchSpy.mockRestore();
+      setNodeLlamaCppModuleForTest(null);
+      rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  test("uses the exact revision cache for pull and doctor without a mutable HEAD request", async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), "qmd-model-revision-cache-"));
+    const revisionPath = join(cacheDir, "hf_ggml-org_embeddinggemma-300M-GGUF_revision_embeddinggemma-300M-Q8_0.gguf");
+    writeFileSync(revisionPath, tinyGguf());
+    const resolveModelFile = vi.fn(async (model: string, options?: { download?: false }) => {
+      expect(model).toBe(DEFAULT_EMBED_MODEL_URI);
+      if (options?.download === false) return revisionPath;
+      writeFileSync(revisionPath, tinyGguf("downloaded-mismatch"));
+      return revisionPath;
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      throw new Error("built-in pull must not perform an ETag HEAD request");
+    });
+    setNodeLlamaCppModuleForTest({
+      LlamaLogLevel: { error: "error" },
+      resolveModelFile,
+      LlamaChatSession: vi.fn() as any,
+      getLlama: vi.fn(),
+    });
+
+    try {
+      await expect(findCachedBuiltinModelPath(DEFAULT_EMBED_MODEL_URI, cacheDir)).resolves.toBe(revisionPath);
+      const cached = await inspectCachedBuiltinModel(DEFAULT_EMBED_MODEL_URI, cacheDir);
+      expect(cached.path).toBe(revisionPath);
+      expect(cached.inspection?.kind).toBe("size");
+      await expect(pullModels([DEFAULT_EMBED_MODEL_URI], { cacheDir })).rejects.toThrow("integrity check failed");
+      expect(existsSync(revisionPath)).toBe(false);
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(resolveModelFile).toHaveBeenCalledWith(
+        DEFAULT_EMBED_MODEL_URI,
+        expect.objectContaining({ directory: cacheDir, download: false }),
+      );
+    } finally {
+      fetchSpy.mockRestore();
+      setNodeLlamaCppModuleForTest(null);
+      rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  test("refresh removes only the exact built-in revision cache target", async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), "qmd-model-refresh-target-"));
+    const revisionPath = join(cacheDir, "hf_ggml-org_embeddinggemma-300M-GGUF_0f741b5a6585bd53aeb15cd1372c56f2a0f65e12_embeddinggemma-300M-Q8_0.gguf");
+    const adjacentRevisionPath = join(cacheDir, "hf_ggml-org_embeddinggemma-300M-GGUF_other-revision_embeddinggemma-300M-Q8_0.gguf");
+    writeFileSync(revisionPath, tinyGguf("old-cache"));
+    writeFileSync(adjacentRevisionPath, tinyGguf("must-stay"));
+    const resolveModelFile = vi.fn(async (_model: string, options?: { download?: false }) => {
+      if (options?.download === false) {
+        if (existsSync(revisionPath)) return revisionPath;
+        throw new Error("exact revision cache was removed");
+      }
+      writeFileSync(revisionPath, tinyGguf("downloaded-mismatch"));
+      return revisionPath;
+    });
+    setNodeLlamaCppModuleForTest({
+      LlamaLogLevel: { error: "error" },
+      resolveModelFile,
+      LlamaChatSession: vi.fn() as any,
+      getLlama: vi.fn(),
+    });
+
+    try {
+      await expect(pullModels([DEFAULT_EMBED_MODEL_URI], { cacheDir, refresh: true })).rejects.toThrow("integrity check failed");
+      expect(existsSync(revisionPath)).toBe(false);
+      expect(existsSync(adjacentRevisionPath)).toBe(true);
     } finally {
       setNodeLlamaCppModuleForTest(null);
       rmSync(cacheDir, { recursive: true, force: true });

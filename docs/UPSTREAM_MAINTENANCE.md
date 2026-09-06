@@ -41,9 +41,29 @@ adapt the fork to it and delete redundant fork code.
 
 The currently approved defaults are:
 
-- Embedding: `hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf`
-- Generation: `hf:nichenke/qmd-query-expansion-granite-2b-grpo-gguf/qmd-query-expansion-granite-2b-grpo-q4_k_m.gguf`
-- Reranking: `hf:ggml-org/jina-reranker-v1-turbo-en-GGUF/Jina-Bert-Implementation-38M-F16.gguf`
+- Embedding: `hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf#0f741b5a6585bd53aeb15cd1372c56f2a0f65e12`
+- Generation: `hf:nichenke/qmd-query-expansion-granite-2b-grpo-gguf/qmd-query-expansion-granite-2b-grpo-q4_k_m.gguf#449c09bced7605802af16c2b431fd40e5e871b8c`
+- Reranking: `hf:ggml-org/jina-reranker-v1-turbo-en-GGUF/Jina-Bert-Implementation-38M-F16.gguf#8582fa8560bcdd3c5cbc9015514edff0f3b1871f`
+
+`node-llama-cpp` uses `#` for an HF revision; never substitute `@`. The exact
+former floating URI for each built-in is a compatibility alias only in its
+matching role: QMD canonicalizes it to the pinned URI before config persistence
+and trust checks. Arbitrary user overrides do not acquire built-in checksums.
+
+### Immutable artifact manifest
+
+| Role | Revision | Bytes | SHA-256 |
+| --- | --- | ---: | --- |
+| EmbeddingGemma | `0f741b5a6585bd53aeb15cd1372c56f2a0f65e12` | 333,590,944 | `b5ce9d77a3fc4b3b39ccb5643c36777911cc4eb46a66962eadfa3f5f60490d63` |
+| Granite expansion | `449c09bced7605802af16c2b431fd40e5e871b8c` | 1,545,302,752 | `a488061ddcf8ee3e18912cd29cb33cbe6396084946de75544650ac5620e5b6ed` |
+| Jina reranker | `8582fa8560bcdd3c5cbc9015514edff0f3b1871f` | 76,971,168 | `71abc010bb3dce97812ee971509a5cb6ff6f6b8cfffd8480129242f605521fca` |
+
+QMD streams every built-in artifact through size, GGUF-magic, and SHA-256
+validation on cache reuse, download, load, `qmd pull`, and `qmd doctor`. A
+mismatch is never loaded; QMD removes only the revision-specific target and
+downloads it again, while a bad fresh download fails hard. Built-ins do not use
+mutable `/resolve/main` or ETag freshness checks. A pinned embedding URI also
+intentionally changes its fingerprint, causing one safe re-embed.
 
 Preserve the Jina reranker default unless a newly audited replacement passes
 the real-model gate below. Do not restore the previously considered IBM
@@ -66,7 +86,7 @@ support is allowed; Chinese-developed model ancestry is not.
   explicitly accepted this under the practical-lineage policy.
 - License: Apache-2.0.
 - Conversion: official `ggml-org` GGUF conversion at
-  `hf:ggml-org/jina-reranker-v1-turbo-en-GGUF/Jina-Bert-Implementation-38M-F16.gguf`.
+  `hf:ggml-org/jina-reranker-v1-turbo-en-GGUF/Jina-Bert-Implementation-38M-F16.gguf#8582fa8560bcdd3c5cbc9015514edff0f3b1871f`.
 - Verified artifact: 76,971,168 bytes; SHA-256
   `71abc010bb3dce97812ee971509a5cb6ff6f6b8cfffd8480129242f605521fca`.
 - QMD gate: expected document ranked first in 6/7 fixtures and within the top
@@ -80,7 +100,7 @@ audit and passes the real-model gate.
 ### Approved Granite generator provenance exception
 
 The generator URI is
-`hf:nichenke/qmd-query-expansion-granite-2b-grpo-gguf/qmd-query-expansion-granite-2b-grpo-q4_k_m.gguf`.
+`hf:nichenke/qmd-query-expansion-granite-2b-grpo-gguf/qmd-query-expansion-granite-2b-grpo-q4_k_m.gguf#449c09bced7605802af16c2b431fd40e5e871b8c`.
 It is a QMD-specific GRPO checkpoint based on IBM Granite 3.3 2B. Some of its
 label dataset has incomplete generator provenance; the user explicitly
 accepted that limitation under the same practical-lineage policy. Preserve

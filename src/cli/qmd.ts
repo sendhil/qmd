@@ -86,7 +86,7 @@ import {
   type ReindexResult,
   type ChunkStrategy,
 } from "../store.js";
-import { disposeDefaultLlamaCpp, getDefaultLlamaCpp, setDefaultLlamaCpp, LlamaCpp, withLLMSession, pullModels, DEFAULT_MODEL_CACHE_DIR, resolveEmbedModel, resolveGenerateModel, resolveRerankModel, resolveModels, inspectGgufFile, isDarwinMetalMitigationActive } from "../llm.js";
+import { disposeDefaultLlamaCpp, getDefaultLlamaCpp, setDefaultLlamaCpp, LlamaCpp, withLLMSession, pullModels, DEFAULT_MODEL_CACHE_DIR, resolveEmbedModel, resolveGenerateModel, resolveRerankModel, resolveModels, getBuiltinModelSpec, findCachedHfModelPath, inspectCachedBuiltinModel, inspectGgufFile, isDarwinMetalMitigationActive, type BuiltinModelRole } from "../llm.js";
 import {
   formatSearchResults,
   formatDocuments,
@@ -3762,24 +3762,29 @@ function formatModelDiagnosticPath(path: string): string {
   return sanitizeDiagnosticMessage(path);
 }
 
-function findCachedModelInspection(model: string): CachedModelInspection {
+async function findCachedModelInspection(
+  model: string,
+  role: BuiltinModelRole,
+): Promise<CachedModelInspection> {
   const invalid: string[] = [];
+  const builtin = getBuiltinModelSpec(model, role);
+  if (builtin) {
+    const cached = await inspectCachedBuiltinModel(builtin.uri, DEFAULT_MODEL_CACHE_DIR);
+    if (!cached.path || !cached.inspection) return { path: null, invalid };
+    if (cached.inspection.valid) return { path: cached.path, invalid };
+    invalid.push(`${formatModelDiagnosticPath(cached.path)}: ${cached.inspection.details}`);
+    return { path: null, invalid };
+  }
+
   if (model.startsWith("hf:")) {
-    const filename = model.split("/").pop();
-    if (!filename || !existsSync(DEFAULT_MODEL_CACHE_DIR)) return { path: null, invalid };
-    const entries = readdirSync(DEFAULT_MODEL_CACHE_DIR, { withFileTypes: true });
-    for (const entry of entries) {
-      // Only consider real `.gguf` blobs. `qmd pull` writes a `<filename>.etag`
-      // HTTP sidecar next to each download; that name also satisfies
-      // `includes(filename)`, so inspecting it as GGUF false-positives
-      // "invalid model" in `qmd doctor` whenever readdir yields the sidecar
-      // before the blob (#812).
-      if (!entry.isFile() || !entry.name.endsWith(".gguf") || !entry.name.includes(filename)) continue;
-      const candidate = pathJoin(DEFAULT_MODEL_CACHE_DIR, entry.name);
-      const inspection = inspectGgufFile(candidate);
-      if (inspection.valid) return { path: candidate, invalid };
-      invalid.push(`${formatModelDiagnosticPath(candidate)}: ${inspection.details}`);
-    }
+    // Delegate exact cache identity to node-llama-cpp for both `main` and
+    // `#revision` URIs. Filename substring scans can mistake a sibling pinned
+    // artifact (or an `.etag` sidecar) for this explicit custom override.
+    const candidate = await findCachedHfModelPath(model, DEFAULT_MODEL_CACHE_DIR);
+    if (!candidate) return { path: null, invalid };
+    const inspection = inspectGgufFile(candidate);
+    if (inspection.valid) return { path: candidate, invalid };
+    invalid.push(`${formatModelDiagnosticPath(candidate)}: ${inspection.details}`);
     return { path: null, invalid };
   }
 
@@ -3909,23 +3914,35 @@ function checkModelDefaults(activeModels: { embed: string; generate: string; rer
   doctorCheck("model defaults", false, `non-default model configuration: ${notes.join("; ")}`);
 }
 
-function checkModelCache(activeModels: { embed: string; generate: string; rerank: string }, nextSteps: string[]): void {
+async function checkModelCache(activeModels: { embed: string; generate: string; rerank: string }, nextSteps: string[]): Promise<void> {
   const models = [
-    ["embedding", activeModels.embed],
-    ["generation", activeModels.generate],
-    ["reranking", activeModels.rerank],
+    ["embedding", "embed", activeModels.embed],
+    ["generation", "generate", activeModels.generate],
+    ["reranking", "rerank", activeModels.rerank],
   ] as const;
-  const unique = new Map<string, string[]>();
-  for (const [role, model] of models) {
-    unique.set(model, [...(unique.get(model) ?? []), role]);
+  const unique = new Map<string, {
+    model: string;
+    role: BuiltinModelRole;
+    roles: string[];
+    builtin: boolean;
+  }>();
+  for (const [label, role, model] of models) {
+    const builtin = getBuiltinModelSpec(model, role);
+    const key = builtin ? `builtin:${builtin.uri}` : `custom:${model}`;
+    const existing = unique.get(key);
+    if (existing) {
+      existing.roles.push(label);
+    } else {
+      unique.set(key, { model, role, roles: [label], builtin: Boolean(builtin) });
+    }
   }
 
   const missing: string[] = [];
   const cached: string[] = [];
   const invalid: string[] = [];
-  for (const [model, roles] of unique) {
-    const label = `${roles.join("+")}: ${model}`;
-    const inspection = findCachedModelInspection(model);
+  for (const target of unique.values()) {
+    const label = `${target.roles.join("+")}: ${target.model}`;
+    const inspection = await findCachedModelInspection(target.model, target.role);
     invalid.push(...inspection.invalid.map(detail => `${label} (${detail})`));
     if (inspection.path) {
       cached.push(label);
@@ -3935,7 +3952,10 @@ function checkModelCache(activeModels: { embed: string; generate: string; rerank
   }
 
   if (missing.length === 0 && invalid.length === 0) {
-    doctorCheck("model cache", true, `${cached.length} active ${cached.length === 1 ? "model is" : "models are"} downloaded and valid GGUF`);
+    const integrityNote = [...unique.values()].some(target => target.builtin)
+      ? " (built-in defaults SHA-256 verified)"
+      : "";
+    doctorCheck("model cache", true, `${cached.length} active ${cached.length === 1 ? "model is" : "models are"} downloaded and valid GGUF${integrityNote}`);
     return;
   }
 
@@ -4191,7 +4211,7 @@ async function showDoctor(): Promise<void> {
   const configModels = configCheck.config?.models ?? {};
   checkEnvironmentOverrides(activeModels, configModels);
   checkModelDefaults(activeModels, configModels);
-  checkModelCache(activeModels, nextSteps);
+  await checkModelCache(activeModels, nextSteps);
 
   await runDoctorDeviceChecks(nextSteps);
 
@@ -4695,9 +4715,9 @@ if (isMain) {
       const refresh = cli.values.refresh === undefined ? false : Boolean(cli.values.refresh);
       const activeModels = resolveModelsForRuntime();
       const models = [
-        activeModels.embed,
-        activeModels.generate,
-        activeModels.rerank,
+        { uri: activeModels.embed, role: "embed" as const },
+        { uri: activeModels.generate, role: "generate" as const },
+        { uri: activeModels.rerank, role: "rerank" as const },
       ];
       console.log(`${c.bold}Pulling models${c.reset}`);
       const results = await pullModels(models, {

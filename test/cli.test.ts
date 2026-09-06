@@ -774,7 +774,8 @@ describe("CLI Status Command", () => {
     const cacheRoot = join(env.configDir, "cache");
     const modelCacheDir = join(cacheRoot, "qmd", "models");
     await mkdir(modelCacheDir, { recursive: true });
-    const badModelPath = join(modelCacheDir, "custom.gguf");
+    // node-llama-cpp's exact cache target for `hf:example/custom-model/custom.gguf`.
+    const badModelPath = join(modelCacheDir, "hf_example_custom-model_custom.gguf");
     await writeFile(badModelPath, "<!doctype html><html>blocked</html>");
 
     const { stdout, exitCode } = await runQmd(["doctor"], {
@@ -792,6 +793,87 @@ describe("CLI Status Command", () => {
     expect(stdout).toContain("qmd pull --refresh");
   }, 20000);
 
+  test("qmd doctor finds the revision-specific built-in cache rather than a floating main cache", async () => {
+    const env = await createIsolatedTestEnv("doctor-pinned-model-cache");
+    await writeFile(join(env.configDir, "index.yml"), `collections: {}\nmodels:\n  embed: ${DEFAULT_EMBED_MODEL_URI}\n  generate: hf:example/custom-generate/model.gguf\n  rerank: hf:example/custom-rerank/model.gguf\n`);
+    const cacheRoot = join(env.configDir, "cache");
+    const modelCacheDir = join(cacheRoot, "qmd", "models");
+    await mkdir(modelCacheDir, { recursive: true });
+    const revision = DEFAULT_EMBED_MODEL_URI.split("#")[1]!;
+    const revisionCachePath = join(
+      modelCacheDir,
+      `hf_ggml-org_embeddinggemma-300M-GGUF_${revision}_embeddinggemma-300M-Q8_0.gguf`,
+    );
+    // Tiny but syntactically valid GGUF: doctor must discover the exact revision
+    // cache then reject its size/hash, not mistake it for a missing `main` file.
+    await writeFile(revisionCachePath, Buffer.concat([Buffer.from("GGUF"), Buffer.alloc(60)]));
+
+    const { stdout, exitCode } = await runQmd(["doctor"], {
+      dbPath: env.dbPath,
+      configDir: env.configDir,
+      env: {
+        XDG_CACHE_HOME: cacheRoot,
+        QMD_DOCTOR_DEVICE_PROBE: "0",
+      },
+    });
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("model cache");
+    expect(stdout).toContain("invalid 1");
+    expect(stdout).toContain(revisionCachePath);
+    expect(stdout).toContain("size mismatch");
+  }, 20000);
+
+  test("qmd doctor finds a revision-specific custom override cache", async () => {
+    const env = await createIsolatedTestEnv("doctor-custom-revision-cache");
+    const customUri = "hf:example/custom/model.gguf#0123456789abcdef0123456789abcdef01234567";
+    await writeFile(join(env.configDir, "index.yml"), `collections: {}\nmodels:\n  embed: \"${customUri}\"\n  generate: \"${customUri}\"\n  rerank: \"${customUri}\"\n`);
+    const cacheRoot = join(env.configDir, "cache");
+    const modelCacheDir = join(cacheRoot, "qmd", "models");
+    await mkdir(modelCacheDir, { recursive: true });
+    await writeFile(
+      join(modelCacheDir, "hf_example_custom_0123456789abcdef0123456789abcdef01234567_model.gguf"),
+      Buffer.concat([Buffer.from("GGUF"), Buffer.alloc(60)]),
+    );
+
+    const { stdout, exitCode } = await runQmd(["doctor"], {
+      dbPath: env.dbPath,
+      configDir: env.configDir,
+      env: {
+        XDG_CACHE_HOME: cacheRoot,
+        QMD_DOCTOR_DEVICE_PROBE: "0",
+      },
+    });
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("model cache");
+    expect(stdout).toContain("1 active model is downloaded and valid GGUF");
+  }, 20000);
+
+  test("qmd doctor does not mistake a pinned sibling for an unpinned custom override", async () => {
+    const env = await createIsolatedTestEnv("doctor-custom-sibling-cache");
+    const legacyEmbedUri = "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf";
+    await writeFile(join(env.configDir, "index.yml"), `collections: {}\nmodels:\n  embed: hf:example/custom-embed/model.gguf\n  generate: \"${legacyEmbedUri}\"\n  rerank: hf:example/custom-rerank/model.gguf\n`);
+    const cacheRoot = join(env.configDir, "cache");
+    const modelCacheDir = join(cacheRoot, "qmd", "models");
+    await mkdir(modelCacheDir, { recursive: true });
+    const revision = DEFAULT_EMBED_MODEL_URI.split("#")[1]!;
+    await writeFile(
+      join(modelCacheDir, `hf_ggml-org_embeddinggemma-300M-GGUF_${revision}_embeddinggemma-300M-Q8_0.gguf`),
+      Buffer.concat([Buffer.from("GGUF"), Buffer.alloc(60)]),
+    );
+
+    const { stdout, exitCode } = await runQmd(["doctor"], {
+      dbPath: env.dbPath,
+      configDir: env.configDir,
+      env: {
+        XDG_CACHE_HOME: cacheRoot,
+        QMD_DOCTOR_DEVICE_PROBE: "0",
+      },
+    });
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("model cache");
+    expect(stdout).toContain("missing 3/3");
+  }, 20000);
+
   test("qmd doctor ignores .etag sidecars beside a valid cached model", async () => {
     // `qmd pull` writes a `<filename>.etag` HTTP sidecar next to each model
     // blob. That sidecar matches the model-cache lookup's `includes(filename)`
@@ -799,9 +881,11 @@ describe("CLI Status Command", () => {
     // "invalid" — order-dependently, whenever readdir yields the sidecar
     // before the blob (#812). Only real `.gguf` files must be considered.
     const env = await createIsolatedTestEnv("doctor-etag-sidecar");
-    // Mirror the embeddinggemma layout from #812: bare `<name>.gguf.etag`
+    // Use an explicit override: built-ins additionally require their audited
+    // byte size and SHA-256, while this regression only covers `.etag` cache
+    // sidecars. Mirror the old layout from #812: bare `<name>.gguf.etag`
     // sorts before the node-llama-cpp `hf_<org>_<name>.gguf` blob.
-    const model = "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf";
+    const model = "hf:example/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf";
     await writeFile(join(env.configDir, "index.yml"), `collections: {}\nmodels:\n  embed: ${model}\n  generate: ${model}\n  rerank: ${model}\n`);
     const cacheRoot = join(env.configDir, "cache");
     const modelCacheDir = join(cacheRoot, "qmd", "models");
@@ -810,7 +894,7 @@ describe("CLI Status Command", () => {
     // the blob on order-preserving filesystems (the bug's trigger condition).
     await writeFile(join(modelCacheDir, "embeddinggemma-300M-Q8_0.gguf.etag"), '"9d3a1b2c3d4e5"\n');
     await writeFile(
-      join(modelCacheDir, "hf_ggml-org_embeddinggemma-300M-Q8_0.gguf"),
+      join(modelCacheDir, "hf_example_embeddinggemma-300M-Q8_0.gguf"),
       Buffer.concat([Buffer.from("GGUF"), Buffer.alloc(60)]),
     );
 

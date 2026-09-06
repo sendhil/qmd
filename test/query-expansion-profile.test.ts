@@ -3,6 +3,7 @@ import {
   BOUNDED_EXPANSION_GRAMMAR,
   resolveQueryExpansionProfile,
 } from "../src/query-expansion-profile.js";
+import { DEFAULT_GENERATE_MODEL_URI } from "../src/llm.js";
 
 describe("resolveQueryExpansionProfile", () => {
   test("selects Granite for a Hugging Face URI", () => {
@@ -15,6 +16,11 @@ describe("resolveQueryExpansionProfile", () => {
     );
     expect(profile.prompt("auth config")).toBe("Expand this search query: auth config");
     expect(profile.maxTokens).toBe(300);
+  });
+
+  test("selects Granite for the revision-pinned built-in generator", () => {
+    expect(DEFAULT_GENERATE_MODEL_URI).toMatch(/#[0-9a-f]{40}$/);
+    expect(resolveQueryExpansionProfile(DEFAULT_GENERATE_MODEL_URI).id).toBe("granite");
   });
 
   test("selects Granite for a case-insensitive local filename", () => {
