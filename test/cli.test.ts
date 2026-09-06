@@ -14,9 +14,9 @@ import { fileURLToPath } from "url";
 import { spawn } from "child_process";
 import { setTimeout as sleep } from "timers/promises";
 import YAML from "yaml";
-import { buildEditorUri, termLink, resolveEmbedModelForCli } from "../src/cli/qmd.ts";
+import { buildEditorUri, termLink, resolveEmbedModelForCli, buildPullModelRequests } from "../src/cli/qmd.ts";
 import { openDatabase } from "../src/db.ts";
-import { DEFAULT_EMBED_MODEL_URI, DEFAULT_GENERATE_MODEL_URI, DEFAULT_RERANK_MODEL_URI } from "../src/llm.ts";
+import { BUILTIN_MODEL_MANIFEST, DEFAULT_EMBED_MODEL_URI, DEFAULT_GENERATE_MODEL_URI, DEFAULT_RERANK_MODEL_URI } from "../src/llm.ts";
 import { setConfigSource, type CollectionConfig } from "../src/collections.ts";
 
 // Test fixtures directory and database path
@@ -89,6 +89,18 @@ function getFreshDbPath(): string {
   testCounter++;
   return join(testDir, `test-${testCounter}.sqlite`);
 }
+
+test("qmd pull keeps role tags while canonicalizing matching legacy defaults", () => {
+  expect(buildPullModelRequests({
+    embed: BUILTIN_MODEL_MANIFEST.embed.logicalUri,
+    generate: BUILTIN_MODEL_MANIFEST.generate.logicalUri,
+    rerank: BUILTIN_MODEL_MANIFEST.rerank.logicalUri,
+  })).toEqual([
+    { uri: DEFAULT_EMBED_MODEL_URI, role: "embed" },
+    { uri: DEFAULT_GENERATE_MODEL_URI, role: "generate" },
+    { uri: DEFAULT_RERANK_MODEL_URI, role: "rerank" },
+  ]);
+});
 
 // Create an isolated test environment (db + config dir)
 async function createIsolatedTestEnv(prefix: string): Promise<{ dbPath: string; configDir: string }> {
@@ -804,9 +816,14 @@ describe("CLI Status Command", () => {
       modelCacheDir,
       `hf_ggml-org_embeddinggemma-300M-GGUF_${revision}_embeddinggemma-300M-Q8_0.gguf`,
     );
+    const floatingSiblingPath = join(
+      modelCacheDir,
+      "hf_ggml-org_embeddinggemma-300M-GGUF_embeddinggemma-300M-Q8_0.gguf",
+    );
     // Tiny but syntactically valid GGUF: doctor must discover the exact revision
     // cache then reject its size/hash, not mistake it for a missing `main` file.
     await writeFile(revisionCachePath, Buffer.concat([Buffer.from("GGUF"), Buffer.alloc(60)]));
+    await writeFile(floatingSiblingPath, "<!doctype html><html>floating sibling</html>");
 
     const { stdout, exitCode } = await runQmd(["doctor"], {
       dbPath: env.dbPath,
@@ -821,6 +838,7 @@ describe("CLI Status Command", () => {
     expect(stdout).toContain("invalid 1");
     expect(stdout).toContain(revisionCachePath);
     expect(stdout).toContain("size mismatch");
+    expect(stdout).not.toContain(floatingSiblingPath);
   }, 20000);
 
   test("qmd doctor finds a revision-specific custom override cache", async () => {

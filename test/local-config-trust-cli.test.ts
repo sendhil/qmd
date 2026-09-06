@@ -6,11 +6,12 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
+import { BUILTIN_MODEL_MANIFEST, DEFAULT_EMBED_MODEL_URI, DEFAULT_GENERATE_MODEL_URI, DEFAULT_RERANK_MODEL_URI } from "../src/llm.js";
 
 const thisDir = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(thisDir, "..");
@@ -165,6 +166,33 @@ describe("qmd update with a checked-in custom model URI", () => {
     const result = await runQmd(["update"]);
     expect(result.stdout).not.toContain("Custom models");
     expect(result.stdout).toContain("Indexed: 1 new");
+  }, 120_000);
+});
+
+describe("qmd update with checked-in legacy defaults", () => {
+  test("trusts matching legacy aliases and persists their pinned identities", async () => {
+    writeLocalConfig([
+      "collections:",
+      "  docs:",
+      "    path: ./docs",
+      '    pattern: "**/*.md"',
+      "models:",
+      `  embed: ${BUILTIN_MODEL_MANIFEST.embed.logicalUri}`,
+      `  generate: ${BUILTIN_MODEL_MANIFEST.generate.logicalUri}`,
+      `  rerank: ${BUILTIN_MODEL_MANIFEST.rerank.logicalUri}`,
+      "",
+    ].join("\n"));
+
+    const result = await runQmd(["update"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Indexed: 1 new");
+    expect(result.stdout).not.toContain("Custom models");
+    expect(result.stdout).not.toContain("qmd trust");
+    const persisted = readFileSync(join(projectDir, ".qmd", "index.yml"), "utf-8");
+    expect(persisted).toContain(DEFAULT_EMBED_MODEL_URI);
+    expect(persisted).toContain(DEFAULT_GENERATE_MODEL_URI);
+    expect(persisted).toContain(DEFAULT_RERANK_MODEL_URI);
   }, 120_000);
 });
 

@@ -15,6 +15,7 @@ type ResolveModelFileOptions = {
   directory?: string;
   cli?: boolean;
   download?: "auto" | false;
+  fileName?: string;
 };
 
 type StdoutChunk = string | Uint8Array;
@@ -84,8 +85,8 @@ export async function withNativeStdoutRedirectedToStderr<T>(fn: () => Promise<T>
 }
 
 import { homedir } from "os";
-import { dirname, join } from "path";
-import { accessSync, constants, createReadStream, existsSync, mkdirSync, statSync, unlinkSync, readdirSync, readFileSync, writeFileSync, openSync, readSync, closeSync } from "fs";
+import { dirname, isAbsolute, join, relative, resolve } from "path";
+import { accessSync, constants, createReadStream, existsSync, mkdirSync, statSync, unlinkSync, readFileSync, writeFileSync, openSync, readSync, closeSync } from "fs";
 import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
 import { resolveQueryExpansionProfile } from "./query-expansion-profile.js";
@@ -641,12 +642,33 @@ async function validateGgufFile(
  * capture that as thousands of tokens. Always pass an options object so the
  * bar is off unless the caller opts in (#776).
  */
-function resolveModelFileArgs(cacheDir: string, cli = false): { directory: string; cli: boolean } {
-  return { directory: cacheDir, cli };
+function getUrlCacheFileName(modelUri: string): string | null {
+  if (!/^https?:\/\//i.test(modelUri)) return null;
+  try {
+    new URL(modelUri);
+    return `url_${createHash("sha256").update(modelUri).digest("hex")}.gguf`;
+  } catch {
+    return null;
+  }
 }
 
-function resolveCachedModelFileArgs(cacheDir: string): ResolveModelFileOptions {
-  return { directory: cacheDir, cli: false, download: false };
+function resolveModelFileArgs(
+  cacheDir: string,
+  cli = false,
+  modelUri?: string,
+): ResolveModelFileOptions {
+  const fileName = modelUri ? getUrlCacheFileName(modelUri) : null;
+  return { directory: cacheDir, cli, ...(fileName ? { fileName } : {}) };
+}
+
+function resolveCachedModelFileArgs(cacheDir: string, modelUri?: string): ResolveModelFileOptions {
+  const fileName = modelUri ? getUrlCacheFileName(modelUri) : null;
+  return { directory: cacheDir, cli: false, download: false, ...(fileName ? { fileName } : {}) };
+}
+
+function isPathInsideDirectory(filePath: string, directory: string): boolean {
+  const pathFromCache = relative(directory, filePath);
+  return pathFromCache !== "" && !isAbsolute(pathFromCache) && !pathFromCache.split(/[\\/]/).includes("..");
 }
 
 /** Locate the exact node-llama-cpp cache entry for any `hf:` URI, including `#revision`. */
@@ -657,11 +679,32 @@ export async function findCachedHfModelPath(
   if (!parseHfUri(modelUri)) return null;
   try {
     const { resolveModelFile } = await loadNodeLlamaCpp();
-    const path = await resolveModelFile(modelUri, resolveCachedModelFileArgs(cacheDir));
+    const path = await resolveModelFile(modelUri, resolveCachedModelFileArgs(cacheDir, modelUri));
     return existsSync(path) ? path : null;
   } catch {
     return null;
   }
+}
+
+/** Locate a stable URL cache entry without relying on its remote basename. */
+async function findCachedUrlModelPath(
+  modelUri: string,
+  cacheDir: string,
+): Promise<string | null> {
+  if (!getUrlCacheFileName(modelUri)) return null;
+  try {
+    const { resolveModelFile } = await loadNodeLlamaCpp();
+    const path = await resolveModelFile(modelUri, resolveCachedModelFileArgs(cacheDir, modelUri));
+    return existsSync(path) ? path : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A local model can only be refreshed when node-llama-cpp addresses it inside this cache. */
+function findCachedLocalModelPath(modelUri: string, cacheDir: string): string | null {
+  const path = resolve(cacheDir, modelUri);
+  return isPathInsideDirectory(path, cacheDir) && existsSync(path) ? path : null;
 }
 
 /** Locate only the node-llama-cpp cache entry for an exact built-in revision. */
@@ -726,7 +769,7 @@ async function resolveAndValidateModelFile(
   if (builtin) return await resolveBuiltinModelFile(builtin, cacheDir, cli);
 
   const { resolveModelFile } = await loadNodeLlamaCpp();
-  const path = await resolveModelFile(canonicalUri, resolveModelFileArgs(cacheDir, cli));
+  const path = await resolveModelFile(canonicalUri, resolveModelFileArgs(cacheDir, cli, canonicalUri));
   await validateGgufFile(path, canonicalUri, role);
   return path;
 }
@@ -772,18 +815,14 @@ export async function pullModels(
     }
 
     const hfRef = parseHfUri(model);
-    const filename = hfRef?.file.split("/").pop() ?? model.split("/").pop();
+    const filename = hfRef?.file.split("/").pop();
     const hfCachePath = hfRef
       ? await findCachedHfModelPath(model, cacheDir)
       : null;
-    const entries = hfRef ? [] : readdirSync(cacheDir, { withFileTypes: true });
-    const cached = hfRef
-      ? hfCachePath ? [hfCachePath] : []
-      : filename
-        ? entries
-            .filter((entry) => entry.isFile() && entry.name.includes(filename))
-            .map((entry) => join(cacheDir, entry.name))
-        : [];
+    const customCachePath = hfRef
+      ? hfCachePath
+      : await findCachedUrlModelPath(model, cacheDir) ?? findCachedLocalModelPath(model, cacheDir);
+    const cached = customCachePath ? [customCachePath] : [];
 
     if (hfRef && filename) {
       if (hfRef.revision) {
@@ -810,11 +849,9 @@ export async function pullModels(
           refreshed = cached.length > 0;
         }
       }
-    } else if (options.refresh && filename) {
-      for (const candidate of cached) {
-        if (existsSync(candidate)) unlinkSync(candidate);
-        refreshed = true;
-      }
+    } else if (options.refresh && customCachePath) {
+      if (existsSync(customCachePath)) unlinkSync(customCachePath);
+      refreshed = true;
     }
 
     const path = await resolveAndValidateModelFile(model, cacheDir, options.cli === true, role);

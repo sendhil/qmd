@@ -8,7 +8,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll, vi } from "vitest";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from "fs";
 import { createHash } from "crypto";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -182,6 +182,11 @@ describe("pinned built-in model integrity", () => {
     return Buffer.concat([Buffer.from("GGUF"), Buffer.from(payload)]);
   }
 
+  function writeSizedGguf(path: string, sizeBytes: number, payload = "fixture"): void {
+    writeFileSync(path, tinyGguf(payload));
+    truncateSync(path, sizeBytes);
+  }
+
   test("accepts a cached GGUF whose declared size and SHA-256 match", async () => {
     const cacheDir = mkdtempSync(join(tmpdir(), "qmd-model-integrity-good-"));
     const path = join(cacheDir, "model.gguf");
@@ -215,6 +220,36 @@ describe("pinned built-in model integrity", () => {
       expect(inspection.kind).toBe("checksum");
       expect(inspection.details).toContain("SHA-256 mismatch");
     } finally {
+      rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  test("pull streams SHA-256 for a full-size built-in cache before reusing it", async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), "qmd-model-integrity-pull-sha-"));
+    const cachePath = join(cacheDir, "hf_ggml-org_embeddinggemma-300M-GGUF_0f741b5a6585bd53aeb15cd1372c56f2a0f65e12_embeddinggemma-300M-Q8_0.gguf");
+    const { sizeBytes } = BUILTIN_MODEL_MANIFEST.embed;
+    writeSizedGguf(cachePath, sizeBytes, "cached-wrong-sha");
+    const resolveModelFile = vi.fn(async (_model: string, options?: { download?: false }) => {
+      if (options?.download === false) return cachePath;
+      writeSizedGguf(cachePath, sizeBytes, "downloaded-wrong-sha");
+      return cachePath;
+    });
+    setNodeLlamaCppModuleForTest({
+      LlamaLogLevel: { error: "error" },
+      resolveModelFile,
+      LlamaChatSession: vi.fn() as any,
+      getLlama: vi.fn(),
+    });
+
+    try {
+      await expect(pullModels([DEFAULT_EMBED_MODEL_URI], { cacheDir })).rejects.toThrow("SHA-256 mismatch");
+      expect(existsSync(cachePath)).toBe(false);
+      expect(resolveModelFile).toHaveBeenCalledWith(
+        DEFAULT_EMBED_MODEL_URI,
+        { directory: cacheDir, cli: false },
+      );
+    } finally {
+      setNodeLlamaCppModuleForTest(null);
       rmSync(cacheDir, { recursive: true, force: true });
     }
   });
@@ -369,6 +404,72 @@ describe("pinned built-in model integrity", () => {
       expect(existsSync(builtInCachePath)).toBe(true);
     } finally {
       fetchSpy.mockRestore();
+      setNodeLlamaCppModuleForTest(null);
+      rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  test("refreshes only the exact local cache target when its basename matches a pinned built-in", async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), "qmd-model-local-sibling-"));
+    const localModel = "embeddinggemma-300M-Q8_0.gguf";
+    const localCachePath = join(cacheDir, localModel);
+    const builtInCachePath = join(cacheDir, "hf_ggml-org_embeddinggemma-300M-GGUF_0f741b5a6585bd53aeb15cd1372c56f2a0f65e12_embeddinggemma-300M-Q8_0.gguf");
+    writeFileSync(localCachePath, tinyGguf("local-old-cache"));
+    writeFileSync(builtInCachePath, tinyGguf("pinned-must-stay"));
+    const resolveModelFile = vi.fn(async (model: string) => {
+      expect(model).toBe(localModel);
+      writeFileSync(localCachePath, tinyGguf("local-refreshed"));
+      return localCachePath;
+    });
+    setNodeLlamaCppModuleForTest({
+      LlamaLogLevel: { error: "error" },
+      resolveModelFile,
+      LlamaChatSession: vi.fn() as any,
+      getLlama: vi.fn(),
+    });
+
+    try {
+      await expect(pullModels([localModel], { cacheDir, refresh: true })).resolves.toEqual([
+        expect.objectContaining({ model: localModel, path: localCachePath, refreshed: true }),
+      ]);
+      expect(existsSync(builtInCachePath)).toBe(true);
+    } finally {
+      setNodeLlamaCppModuleForTest(null);
+      rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  test("refreshes an HTTPS override through a URL-specific cache target", async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), "qmd-model-url-sibling-"));
+    const url = "https://models.example.invalid/embeddinggemma-300M-Q8_0.gguf";
+    const urlCachePath = join(cacheDir, "url-cache-target.gguf");
+    const builtInCachePath = join(cacheDir, "hf_ggml-org_embeddinggemma-300M-GGUF_0f741b5a6585bd53aeb15cd1372c56f2a0f65e12_embeddinggemma-300M-Q8_0.gguf");
+    writeFileSync(urlCachePath, tinyGguf("url-old-cache"));
+    writeFileSync(builtInCachePath, tinyGguf("pinned-must-stay"));
+    const resolveModelFile = vi.fn(async (model: string, options?: { download?: false; fileName?: string }) => {
+      expect(model).toBe(url);
+      expect(options?.fileName).toMatch(/^url_[0-9a-f]{64}\.gguf$/);
+      if (options?.download === false) return urlCachePath;
+      writeFileSync(urlCachePath, tinyGguf("url-refreshed"));
+      return urlCachePath;
+    });
+    setNodeLlamaCppModuleForTest({
+      LlamaLogLevel: { error: "error" },
+      resolveModelFile,
+      LlamaChatSession: vi.fn() as any,
+      getLlama: vi.fn(),
+    });
+
+    try {
+      await expect(pullModels([url], { cacheDir, refresh: true })).resolves.toEqual([
+        expect.objectContaining({ model: url, path: urlCachePath, refreshed: true }),
+      ]);
+      expect(existsSync(builtInCachePath)).toBe(true);
+      expect(resolveModelFile).toHaveBeenCalledWith(
+        url,
+        expect.objectContaining({ directory: cacheDir, download: false }),
+      );
+    } finally {
       setNodeLlamaCppModuleForTest(null);
       rmSync(cacheDir, { recursive: true, force: true });
     }

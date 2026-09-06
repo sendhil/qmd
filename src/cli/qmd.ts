@@ -86,7 +86,7 @@ import {
   type ReindexResult,
   type ChunkStrategy,
 } from "../store.js";
-import { disposeDefaultLlamaCpp, getDefaultLlamaCpp, setDefaultLlamaCpp, LlamaCpp, withLLMSession, pullModels, DEFAULT_MODEL_CACHE_DIR, resolveEmbedModel, resolveGenerateModel, resolveRerankModel, resolveModels, getBuiltinModelSpec, findCachedHfModelPath, inspectCachedBuiltinModel, inspectGgufFile, isDarwinMetalMitigationActive, type BuiltinModelRole } from "../llm.js";
+import { disposeDefaultLlamaCpp, getDefaultLlamaCpp, setDefaultLlamaCpp, LlamaCpp, withLLMSession, pullModels, DEFAULT_MODEL_CACHE_DIR, resolveEmbedModel, resolveGenerateModel, resolveRerankModel, resolveModels, getBuiltinModelSpec, findCachedHfModelPath, inspectCachedBuiltinModel, inspectGgufFile, isDarwinMetalMitigationActive, type BuiltinModelRole, type PullModelRequest } from "../llm.js";
 import {
   formatSearchResults,
   formatDocuments,
@@ -2185,6 +2185,16 @@ function resolveModelsForRuntime(): { embed: string; generate: string; rerank: s
   const configured = ensureModelsConfiguredForCli();
   if (localConfigIsFullyTrusted()) return configured;
   return resolveModels();
+}
+
+/** Role tags let pullModels migrate only the matching historical built-in alias. */
+export function buildPullModelRequests(models: { embed: string; generate: string; rerank: string }): PullModelRequest[] {
+  const canonical = resolveModels(models);
+  return [
+    { uri: canonical.embed, role: "embed" },
+    { uri: canonical.generate, role: "generate" },
+    { uri: canonical.rerank, role: "rerank" },
+  ];
 }
 
 async function vectorIndex(
@@ -4714,11 +4724,7 @@ if (isMain) {
       await resolveLocalConfigTrust();
       const refresh = cli.values.refresh === undefined ? false : Boolean(cli.values.refresh);
       const activeModels = resolveModelsForRuntime();
-      const models = [
-        { uri: activeModels.embed, role: "embed" as const },
-        { uri: activeModels.generate, role: "generate" as const },
-        { uri: activeModels.rerank, role: "rerank" as const },
-      ];
+      const models = buildPullModelRequests(activeModels);
       console.log(`${c.bold}Pulling models${c.reset}`);
       const results = await pullModels(models, {
         refresh,
