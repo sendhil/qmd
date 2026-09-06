@@ -154,10 +154,12 @@ GitHub release asset instead.
 GitHub's immutable-release setting is not enabled for this repository. Fork
 policy therefore treats every published fork tag and asset as immutable: never
 move or reuse a tag, and never replace or delete its asset.
-`v2.8.3-sendhil.1` remains immutable historical evidence. The remediated
-canonical release for this baseline is `v2.8.3-sendhil.2`; record its hash only
-after the exact archive passes the local and public-byte checks below. Release
-verification depends on those hash and byte comparisons.
+`v2.8.3-sendhil.1` and `v2.8.3-sendhil.2` remain immutable historical
+evidence. The latter did not recognize the existing node-llama-cpp model-cache
+filenames, so do not recommend it for fresh installs. The canonical release
+for this baseline is `v2.8.3-sendhil.3`; record its hash only after the exact
+archive passes the local and public-byte checks below. Release verification
+depends on those hash and byte comparisons.
 
 Run the following only after the full validation suite above passes on the
 committed, rebased HEAD. The sequence pushes that exact validated commit,
@@ -167,7 +169,7 @@ rebuilding, then validates the downloaded release and its public URL:
 ```sh
 set -eu
 
-RELEASE_TAG=v2.8.3-sendhil.2
+RELEASE_TAG=v2.8.3-sendhil.3
 PACKAGE_VERSION=$(node -p 'require("./package.json").version')
 PACKAGE_FILENAME=$(node -p 'const p = require("./package.json"); `${p.name.replace(/^@/, "").replaceAll("/", "-")}-${p.version}.tgz`')
 RELEASE_TAG_PREFIX=v$PACKAGE_VERSION-sendhil.

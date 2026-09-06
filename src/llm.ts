@@ -299,6 +299,8 @@ export type BuiltinModelSpec = Readonly<{
   logicalUri: string;
   /** Immutable node-llama-cpp Hugging Face URI (`#`, never `@`). */
   uri: string;
+  /** Stable node-llama-cpp cache filename used by the former floating URI. */
+  cacheFileName: string;
   sizeBytes: number;
   sha256: string;
 }>;
@@ -313,6 +315,7 @@ export const BUILTIN_MODEL_MANIFEST = {
     role: "embed",
     logicalUri: "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf",
     uri: "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf#0f741b5a6585bd53aeb15cd1372c56f2a0f65e12",
+    cacheFileName: "hf_ggml-org_embeddinggemma-300M-Q8_0.gguf",
     sizeBytes: 333590944,
     sha256: "b5ce9d77a3fc4b3b39ccb5643c36777911cc4eb46a66962eadfa3f5f60490d63",
   },
@@ -320,6 +323,7 @@ export const BUILTIN_MODEL_MANIFEST = {
     role: "generate",
     logicalUri: "hf:nichenke/qmd-query-expansion-granite-2b-grpo-gguf/qmd-query-expansion-granite-2b-grpo-q4_k_m.gguf",
     uri: "hf:nichenke/qmd-query-expansion-granite-2b-grpo-gguf/qmd-query-expansion-granite-2b-grpo-q4_k_m.gguf#449c09bced7605802af16c2b431fd40e5e871b8c",
+    cacheFileName: "hf_nichenke_qmd-query-expansion-granite-2b-grpo-q4_k_m.gguf",
     sizeBytes: 1545302752,
     sha256: "a488061ddcf8ee3e18912cd29cb33cbe6396084946de75544650ac5620e5b6ed",
   },
@@ -327,6 +331,7 @@ export const BUILTIN_MODEL_MANIFEST = {
     role: "rerank",
     logicalUri: "hf:ggml-org/jina-reranker-v1-turbo-en-GGUF/Jina-Bert-Implementation-38M-F16.gguf",
     uri: "hf:ggml-org/jina-reranker-v1-turbo-en-GGUF/Jina-Bert-Implementation-38M-F16.gguf#8582fa8560bcdd3c5cbc9015514edff0f3b1871f",
+    cacheFileName: "hf_ggml-org_jina-reranker-v1-turbo-en-GGUF_Jina-Bert-Implementation-38M-F16.gguf",
     sizeBytes: 76971168,
     sha256: "71abc010bb3dce97812ee971509a5cb6ff6f6b8cfffd8480129242f605521fca",
   },
@@ -354,6 +359,19 @@ export function getBuiltinModelSpec(modelUri: string, role?: BuiltinModelRole): 
   // one only in a role-aware config/runtime flow where migration is explicit.
   const canonicalUri = role ? canonicalizeBuiltinModelUri(modelUri, role) : modelUri;
   return builtinSpecsForRole(role).find(spec => spec.uri === canonicalUri);
+}
+
+/**
+ * A role-less pull is an explicit override, even if its URI happens to equal a
+ * former default. Keep its cache entry separate from the checksum-verified
+ * built-in cache so refresh cannot remove the active default artifact.
+ */
+function getRolelessBuiltinAliasCacheFileName(
+  modelUri: string,
+  role?: BuiltinModelRole,
+): string | null {
+  if (role || !builtinModelSpecs.some(spec => spec.logicalUri === modelUri)) return null;
+  return `hf-override_${createHash("sha256").update(modelUri).digest("hex")}.gguf`;
 }
 
 const DEFAULT_EMBED_MODEL = BUILTIN_MODEL_MANIFEST.embed.uri;
@@ -674,14 +692,19 @@ function resolveModelFileArgs(
   cacheDir: string,
   cli = false,
   modelUri?: string,
+  fileName?: string,
 ): ResolveModelFileOptions {
-  const fileName = modelUri ? getUrlCacheFileName(modelUri) : null;
-  return { directory: cacheDir, cli, ...(fileName ? { fileName } : {}) };
+  const resolvedFileName = fileName ?? (modelUri ? getUrlCacheFileName(modelUri) : null);
+  return { directory: cacheDir, cli, ...(resolvedFileName ? { fileName: resolvedFileName } : {}) };
 }
 
-function resolveCachedModelFileArgs(cacheDir: string, modelUri?: string): ResolveModelFileOptions {
-  const fileName = modelUri ? getUrlCacheFileName(modelUri) : null;
-  return { directory: cacheDir, cli: false, download: false, ...(fileName ? { fileName } : {}) };
+function resolveCachedModelFileArgs(
+  cacheDir: string,
+  modelUri?: string,
+  fileName?: string,
+): ResolveModelFileOptions {
+  const resolvedFileName = fileName ?? (modelUri ? getUrlCacheFileName(modelUri) : null);
+  return { directory: cacheDir, cli: false, download: false, ...(resolvedFileName ? { fileName: resolvedFileName } : {}) };
 }
 
 function isPathInsideDirectory(filePath: string, directory: string): boolean {
@@ -693,11 +716,12 @@ function isPathInsideDirectory(filePath: string, directory: string): boolean {
 export async function findCachedHfModelPath(
   modelUri: string,
   cacheDir: string = MODEL_CACHE_DIR,
+  fileName?: string,
 ): Promise<string | null> {
   if (!parseHfUri(modelUri)) return null;
   try {
     const { resolveModelFile } = await loadNodeLlamaCpp();
-    const path = await resolveModelFile(modelUri, resolveCachedModelFileArgs(cacheDir, modelUri));
+    const path = await resolveModelFile(modelUri, resolveCachedModelFileArgs(cacheDir, modelUri, fileName));
     return existsSync(path) ? path : null;
   } catch {
     return null;
@@ -732,7 +756,7 @@ export async function findCachedBuiltinModelPath(
 ): Promise<string | null> {
   const builtin = getBuiltinModelSpec(modelUri);
   if (!builtin) return null;
-  return await findCachedHfModelPath(builtin.uri, cacheDir);
+  return await findCachedHfModelPath(builtin.uri, cacheDir, builtin.cacheFileName);
 }
 
 export type CachedBuiltinModelInspection = {
@@ -770,7 +794,10 @@ async function resolveBuiltinModelFile(
   }
 
   const { resolveModelFile } = await loadNodeLlamaCpp();
-  const downloadedPath = await resolveModelFile(builtin.uri, resolveModelFileArgs(cacheDir, cli));
+  const downloadedPath = await resolveModelFile(
+    builtin.uri,
+    resolveModelFileArgs(cacheDir, cli, undefined, builtin.cacheFileName),
+  );
   await validateGgufFile(downloadedPath, builtin.uri);
   return downloadedPath;
 }
@@ -787,7 +814,11 @@ async function resolveAndValidateModelFile(
   if (builtin) return await resolveBuiltinModelFile(builtin, cacheDir, cli);
 
   const { resolveModelFile } = await loadNodeLlamaCpp();
-  const path = await resolveModelFile(canonicalUri, resolveModelFileArgs(cacheDir, cli, canonicalUri));
+  const rolelessAliasFileName = getRolelessBuiltinAliasCacheFileName(canonicalUri, role);
+  const path = await resolveModelFile(
+    canonicalUri,
+    resolveModelFileArgs(cacheDir, cli, canonicalUri, rolelessAliasFileName ?? undefined),
+  );
   await validateGgufFile(path, canonicalUri, role);
   return path;
 }
@@ -834,8 +865,9 @@ export async function pullModels(
 
     const hfRef = parseHfUri(model);
     const filename = hfRef?.file.split("/").pop();
+    const rolelessAliasFileName = getRolelessBuiltinAliasCacheFileName(model, role);
     const hfCachePath = hfRef
-      ? await findCachedHfModelPath(model, cacheDir)
+      ? await findCachedHfModelPath(model, cacheDir, rolelessAliasFileName ?? undefined)
       : null;
     const customCachePath = hfRef
       ? hfCachePath

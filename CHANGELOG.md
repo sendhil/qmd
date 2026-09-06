@@ -21,10 +21,12 @@
   collection-relative paths, restoring `pi-memory`'s automatic `/daily` and
   collection-root context setup while preserving unscoped `/` as global.
 - Fork releases now use `v<upstream>-sendhil.<revision>`, resetting the fork
-  revision to `1` for each new upstream baseline. `v2.8.3-sendhil.2` is the
-  remediation release for this baseline; `v2.8.3-sendhil.1` and
-  `non-chinese-v2.8.3.1` / `non-chinese-v2.8.3.2` remain policy-protected
-  historical tags and must never be moved or deleted.
+  revision to `1` for each new upstream baseline. `v2.8.3-sendhil.3` is the
+  canonical release for this baseline. `v2.8.3-sendhil.2` remains immutable
+  historical evidence but does not recognize pre-existing model-cache names;
+  `v2.8.3-sendhil.1` and `non-chinese-v2.8.3.1` / `non-chinese-v2.8.3.2`
+  also remain policy-protected historical tags and must never be moved or
+  deleted.
 
 ### Fixed
 
@@ -39,6 +41,9 @@
 - The packaged runtime skill and installation docs now keep fork-managed users
   on the verified release asset; the upstream-only release script fails closed
   outside the canonical `tobi/qmd` repository.
+- Built-in pinned URIs now reuse the former stable node-llama-cpp cache names
+  after SHA-256 verification, avoiding a redundant model download. A role-less
+  historical `qmd pull` override remains isolated from that built-in cache.
 
 ## [2.8.3] - 2026-08-16
 

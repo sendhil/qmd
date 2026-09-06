@@ -41,7 +41,7 @@ dependencies, so do not use the branch as a global Git dependency. Install the
 canonical prebuilt GitHub release asset instead:
 
 ```sh
-npm install -g https://github.com/sendhil/qmd/releases/download/v2.8.3-sendhil.2/qmd-v2.8.3-sendhil.2.tgz
+npm install -g https://github.com/sendhil/qmd/releases/download/v2.8.3-sendhil.3/qmd-v2.8.3-sendhil.3.tgz
 ```
 
 GitHub's immutable-release setting is not enabled for this repository. The
@@ -51,8 +51,10 @@ against the SHA-256 recorded on the GitHub release before replacing a working
 installation.
 
 Fork releases use `v<upstream>-sendhil.<revision>`, with the revision reset to
-`1` for each new upstream baseline. `v2.8.3-sendhil.2` is the remediation
-release for this baseline; `.1` remains immutable historical evidence.
+`1` for each new upstream baseline. `v2.8.3-sendhil.3` is the canonical
+release for this baseline. `v2.8.3-sendhil.2` is immutable historical evidence
+but lacks compatibility with the existing model-cache filenames; do not install
+it. `.1` remains immutable historical evidence as well.
 Embedding downloads EmbeddingGemma; the first deep query
 also downloads the expander and reranker. QMD stores these GGUF files in its
 normal local model cache, `~/.cache/qmd/models/`:
@@ -103,11 +105,11 @@ verified `v<upstream>-sendhil.<revision>` release asset.
 Install the fork first so `pi-memory` discovers this `qmd` executable:
 
 ```sh
-npm install -g https://github.com/sendhil/qmd/releases/download/v2.8.3-sendhil.2/qmd-v2.8.3-sendhil.2.tgz
+npm install -g https://github.com/sendhil/qmd/releases/download/v2.8.3-sendhil.3/qmd-v2.8.3-sendhil.3.tgz
 pi install npm:pi-memory
 ```
 
-The release asset belongs to the policy-protected `v2.8.3-sendhil.2` tag.
+The release asset belongs to the policy-protected `v2.8.3-sendhil.3` tag.
 `pi-memory` creates its `pi-memory` collection automatically. If QMD was
 installed after Pi started, restart Pi or initialize manually:
 
@@ -125,7 +127,7 @@ or disable another memory extension that registers the same tool name.
 
 ```sh
 # Install the verified asset from the policy-protected GitHub release
-npm install -g https://github.com/sendhil/qmd/releases/download/v2.8.3-sendhil.2/qmd-v2.8.3-sendhil.2.tgz
+npm install -g https://github.com/sendhil/qmd/releases/download/v2.8.3-sendhil.3/qmd-v2.8.3-sendhil.3.tgz
 
 # Create collections for your notes, docs, and meeting transcripts
 qmd collection add ~/notes --name notes
@@ -301,7 +303,7 @@ Use QMD as a library in your own Node.js or Bun applications.
 #### Installation
 
 ```sh
-npm install https://github.com/sendhil/qmd/releases/download/v2.8.3-sendhil.2/qmd-v2.8.3-sendhil.2.tgz
+npm install https://github.com/sendhil/qmd/releases/download/v2.8.3-sendhil.3/qmd-v2.8.3-sendhil.3.tgz
 ```
 
 The fork intentionally keeps QMD's package name, so imports remain

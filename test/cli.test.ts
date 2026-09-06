@@ -830,25 +830,22 @@ describe("CLI Status Command", () => {
     expect(stdout).not.toContain(`missing 1/1: embedding+generation+reranking: ${model}`);
   }, 20000);
 
-  test("qmd doctor finds the revision-specific built-in cache rather than a floating main cache", async () => {
+  test("qmd doctor finds the stable built-in cache rather than a revision sibling", async () => {
     const env = await createIsolatedTestEnv("doctor-pinned-model-cache");
     await writeFile(join(env.configDir, "index.yml"), `collections: {}\nmodels:\n  embed: ${DEFAULT_EMBED_MODEL_URI}\n  generate: hf:example/custom-generate/model.gguf\n  rerank: hf:example/custom-rerank/model.gguf\n`);
     const cacheRoot = join(env.configDir, "cache");
     const modelCacheDir = join(cacheRoot, "qmd", "models");
     await mkdir(modelCacheDir, { recursive: true });
-    const revision = DEFAULT_EMBED_MODEL_URI.split("#")[1]!;
-    const revisionCachePath = join(
+    const stableCachePath = join(modelCacheDir, BUILTIN_MODEL_MANIFEST.embed.cacheFileName);
+    const revisionSiblingPath = join(
       modelCacheDir,
-      `hf_ggml-org_embeddinggemma-300M-GGUF_${revision}_embeddinggemma-300M-Q8_0.gguf`,
+      `hf_ggml-org_embeddinggemma-300M-GGUF_${DEFAULT_EMBED_MODEL_URI.split("#")[1]}_embeddinggemma-300M-Q8_0.gguf`,
     );
-    const floatingSiblingPath = join(
-      modelCacheDir,
-      "hf_ggml-org_embeddinggemma-300M-GGUF_embeddinggemma-300M-Q8_0.gguf",
-    );
-    // Tiny but syntactically valid GGUF: doctor must discover the exact revision
-    // cache then reject its size/hash, not mistake it for a missing `main` file.
-    await writeFile(revisionCachePath, Buffer.concat([Buffer.from("GGUF"), Buffer.alloc(60)]));
-    await writeFile(floatingSiblingPath, "<!doctype html><html>floating sibling</html>");
+    // Tiny but syntactically valid GGUF: doctor must discover the stable
+    // compatibility entry, then reject its size/hash without scanning a
+    // stale revision-named sibling.
+    await writeFile(stableCachePath, Buffer.concat([Buffer.from("GGUF"), Buffer.alloc(60)]));
+    await writeFile(revisionSiblingPath, "<!doctype html><html>revision sibling</html>");
 
     const { stdout, exitCode } = await runQmd(["doctor"], {
       dbPath: env.dbPath,
@@ -861,9 +858,9 @@ describe("CLI Status Command", () => {
     expect(exitCode).toBe(0);
     expect(stdout).toContain("model cache");
     expect(stdout).toContain("invalid 1");
-    expect(stdout).toContain(revisionCachePath);
+    expect(stdout).toContain(stableCachePath);
     expect(stdout).toContain("size mismatch");
-    expect(stdout).not.toContain(floatingSiblingPath);
+    expect(stdout).not.toContain(revisionSiblingPath);
   }, 20000);
 
   test("qmd doctor finds a revision-specific custom override cache", async () => {

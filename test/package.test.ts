@@ -53,10 +53,10 @@ describe("package test task", () => {
   test("recommends the exact canonical prebuilt fork install", () => {
     const readme = readFileSync(new URL("README.md", root), "utf8");
     const releaseUrl =
-      "https://github.com/sendhil/qmd/releases/download/v2.8.3-sendhil.2/qmd-v2.8.3-sendhil.2.tgz";
+      "https://github.com/sendhil/qmd/releases/download/v2.8.3-sendhil.3/qmd-v2.8.3-sendhil.3.tgz";
 
     expect(readme).toContain(`npm install -g ${releaseUrl}`);
-    expect(readme).toContain(".1` remains immutable historical evidence");
+    expect(readme).toContain("v2.8.3-sendhil.2 is immutable historical evidence");
   });
 
   test("does not recommend historical release assets", () => {
@@ -64,6 +64,9 @@ describe("package test task", () => {
 
     expect(readme).not.toMatch(
       /npm install -g [^\n]*releases\/download\/non-chinese-v2\.8\.3\.[12]\//,
+    );
+    expect(readme).not.toMatch(
+      /npm install -g [^\n]*releases\/download\/v2\.8\.3-sendhil\.[12]\//,
     );
   });
 
@@ -133,7 +136,7 @@ describe("package test task", () => {
     );
     const commandBlock = releaseSection.match(/```sh\n([\s\S]*?)\n```/)?.[1] ?? "";
 
-    expect(commandBlock.match(/v2\.8\.3-sendhil\.2/g)).toHaveLength(1);
+    expect(commandBlock.match(/v2\.8\.3-sendhil\.3/g)).toHaveLength(1);
     expect(commandBlock).toMatch(
       /PACKAGE_VERSION=\$\(node -p [^\n]*package\.json/,
     );

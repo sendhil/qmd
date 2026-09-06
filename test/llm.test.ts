@@ -187,6 +187,22 @@ describe("pinned built-in model integrity", () => {
     truncateSync(path, sizeBytes);
   }
 
+  test("keeps built-in compatibility cache names aligned with node-llama-cpp", async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), "qmd-model-cache-name-"));
+    const { resolveModelFile } = await import("node-llama-cpp");
+
+    try {
+      for (const spec of Object.values(BUILTIN_MODEL_MANIFEST)) {
+        await expect(resolveModelFile(spec.logicalUri, {
+          directory: cacheDir,
+          download: false,
+        })).rejects.toThrow(spec.cacheFileName);
+      }
+    } finally {
+      rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
   test("accepts a cached GGUF whose declared size and SHA-256 match", async () => {
     const cacheDir = mkdtempSync(join(tmpdir(), "qmd-model-integrity-good-"));
     const path = join(cacheDir, "model.gguf");
@@ -246,7 +262,11 @@ describe("pinned built-in model integrity", () => {
       expect(existsSync(cachePath)).toBe(false);
       expect(resolveModelFile).toHaveBeenCalledWith(
         DEFAULT_EMBED_MODEL_URI,
-        { directory: cacheDir, cli: false },
+        {
+          directory: cacheDir,
+          cli: false,
+          fileName: BUILTIN_MODEL_MANIFEST.embed.cacheFileName,
+        },
       );
     } finally {
       setNodeLlamaCppModuleForTest(null);
@@ -275,7 +295,11 @@ describe("pinned built-in model integrity", () => {
       await expect((llm as any).resolveModel(BUILTIN_MODEL_MANIFEST.embed.logicalUri, "embed")).rejects.toThrow("integrity check failed");
       expect(resolveModelFile).toHaveBeenCalledWith(
         DEFAULT_EMBED_MODEL_URI,
-        { directory: cacheDir, cli: false },
+        {
+          directory: cacheDir,
+          cli: false,
+          fileName: BUILTIN_MODEL_MANIFEST.embed.cacheFileName,
+        },
       );
       expect(existsSync(downloadedPath)).toBe(false);
     } finally {
@@ -367,6 +391,41 @@ describe("pinned built-in model integrity", () => {
       await expect(pullModels([legacyUri], { cacheDir })).resolves.toEqual([
         expect.objectContaining({ model: legacyUri, path: customPath }),
       ]);
+    } finally {
+      fetchSpy.mockRestore();
+      setNodeLlamaCppModuleForTest(null);
+      rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps a roleless historical pull refresh away from the built-in cache", async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), "qmd-model-roleless-legacy-refresh-"));
+    const legacyUri = BUILTIN_MODEL_MANIFEST.embed.logicalUri;
+    const builtInPath = join(cacheDir, BUILTIN_MODEL_MANIFEST.embed.cacheFileName);
+    const overrideFileName = `hf-override_${createHash("sha256").update(legacyUri).digest("hex")}.gguf`;
+    const overridePath = join(cacheDir, overrideFileName);
+    writeFileSync(builtInPath, tinyGguf("pinned-must-stay"));
+    const resolveModelFile = vi.fn(async (_model: string, options?: { download?: false; fileName?: string }) => {
+      expect(options?.fileName).toBe(overrideFileName);
+      if (options?.download === false) throw new Error("override cache is missing");
+      writeFileSync(overridePath, tinyGguf("roleless-refresh"));
+      return overridePath;
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      throw new Error("offline test");
+    });
+    setNodeLlamaCppModuleForTest({
+      LlamaLogLevel: { error: "error" },
+      resolveModelFile,
+      LlamaChatSession: vi.fn() as any,
+      getLlama: vi.fn(),
+    });
+
+    try {
+      await expect(pullModels([legacyUri], { cacheDir, refresh: true })).resolves.toEqual([
+        expect.objectContaining({ model: legacyUri, path: overridePath }),
+      ]);
+      expect(existsSync(builtInPath)).toBe(true);
     } finally {
       fetchSpy.mockRestore();
       setNodeLlamaCppModuleForTest(null);
@@ -567,9 +626,10 @@ describe("pinned built-in model integrity", () => {
     }
   });
 
-  test("uses the exact revision cache for pull and doctor without a mutable HEAD request", async () => {
+  test("uses the stable legacy cache target for a pinned built-in without a mutable HEAD request", async () => {
     const cacheDir = mkdtempSync(join(tmpdir(), "qmd-model-revision-cache-"));
-    const revisionPath = join(cacheDir, "hf_ggml-org_embeddinggemma-300M-GGUF_revision_embeddinggemma-300M-Q8_0.gguf");
+    const revisionPath = join(cacheDir, "hf_ggml-org_embeddinggemma-300M-GGUF_embeddinggemma-300M-Q8_0.gguf");
+    const stableFileName = "hf_ggml-org_embeddinggemma-300M-Q8_0.gguf";
     writeFileSync(revisionPath, tinyGguf());
     const resolveModelFile = vi.fn(async (model: string, options?: { download?: false }) => {
       expect(model).toBe(DEFAULT_EMBED_MODEL_URI);
@@ -597,7 +657,7 @@ describe("pinned built-in model integrity", () => {
       expect(fetchSpy).not.toHaveBeenCalled();
       expect(resolveModelFile).toHaveBeenCalledWith(
         DEFAULT_EMBED_MODEL_URI,
-        expect.objectContaining({ directory: cacheDir, download: false }),
+        expect.objectContaining({ directory: cacheDir, download: false, fileName: stableFileName }),
       );
     } finally {
       fetchSpy.mockRestore();
