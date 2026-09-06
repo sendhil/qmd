@@ -14,6 +14,9 @@
   expander, and Jina's English reranker, avoiding Chinese-developed model
   weights on a fresh installation. Query expansion selects a model-aware
   prompt and grammar profile while preserving explicit custom-model overrides.
+- `qmd context add` now honors a single `-c/--collection` selector for
+  collection-relative paths, restoring `pi-memory`'s automatic `/daily` and
+  collection-root context setup while preserving unscoped `/` as global.
 
 ## [2.8.3] - 2026-08-16
 
