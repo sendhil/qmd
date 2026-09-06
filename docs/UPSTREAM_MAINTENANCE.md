@@ -105,22 +105,24 @@ not approved unless this real-model gate passes with the proposed URI.
 
 ## Tag and install
 
-Use a tag composed from the current upstream version and fork revision. For the
-initial release this is:
+Use a tag composed from the current upstream version and fork revision. The
+published `non-chinese-v2.8.3.1` tag cannot complete npm's Git-dependency
+`prepare` build because TypeScript was not a direct development dependency.
+It is immutable: never move or recommend it. The planned corrective release is:
 
 ```sh
-git tag -a non-chinese-v2.8.3.1 -m "QMD 2.8.3 with approved model defaults"
+git tag -a non-chinese-v2.8.3.2 -m "QMD 2.8.3 with approved model defaults and Git install fix"
 git push origin non-chinese-defaults
-git push origin non-chinese-v2.8.3.1
-npm install -g github:sendhil/qmd#non-chinese-v2.8.3.1
+git push origin non-chinese-v2.8.3.2
+npm install -g github:sendhil/qmd#non-chinese-v2.8.3.2
 ```
 
 Do not reuse or move a published tag.
 
 ## Rollback
 
-For the first release there is no earlier approved fork release. Remove the
-forked package rather than reinstalling upstream's denied defaults:
+Until a usable immutable fork release exists, remove the forked package rather
+than reinstalling upstream's denied defaults:
 
 ```sh
 npm uninstall -g @tobilu/qmd
@@ -128,5 +130,6 @@ command -v qmd || true
 ```
 
 The expected result is that `qmd` is no longer found. Do not delete model
-caches or indexes. For later releases, roll back by installing the preceding
+caches or indexes. Never use defective `non-chinese-v2.8.3.1` as a rollback
+target. For later releases, roll back by installing the preceding verified,
 immutable `non-chinese-v*` tag. Never reset or force-push the shared branch.

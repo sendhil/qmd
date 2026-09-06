@@ -6,6 +6,11 @@ const root = new URL("..", import.meta.url);
 const pkg = JSON.parse(readFileSync(new URL("package.json", root), "utf8"));
 
 describe("package test task", () => {
+  test("declares TypeScript directly for Git prepare builds", () => {
+    expect(pkg.scripts.prepare).toContain("scripts/build.mjs");
+    expect(pkg.devDependencies?.typescript).toBe("5.9.3");
+  });
+
   test("exposes an opt-in non-Chinese model smoke test", () => {
     expect(pkg.scripts["smoke:non-chinese-models"]).toBe(
       "tsx scripts/smoke-non-chinese-models.ts",
