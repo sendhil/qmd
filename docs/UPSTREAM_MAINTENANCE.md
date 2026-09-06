@@ -108,16 +108,24 @@ not approved unless this real-model gate passes with the proposed URI.
 Use a tag composed from the current upstream version and fork revision. The
 published `non-chinese-v2.8.3.1` tag cannot complete npm's Git-dependency
 `prepare` build because TypeScript was not a direct development dependency.
-It is immutable: never move or recommend it. The planned corrective release is:
+It is immutable: never move or recommend it. TypeScript is now explicit, but
+npm's open [global Git-dependency prepare bug](https://github.com/npm/cli/issues/8440)
+still makes `npm install -g github:...` unsuitable. Publish and test a prebuilt
+GitHub release asset instead:
 
 ```sh
 git tag -a non-chinese-v2.8.3.2 -m "QMD 2.8.3 with approved model defaults and Git install fix"
 git push origin non-chinese-defaults
 git push origin non-chinese-v2.8.3.2
-npm install -g github:sendhil/qmd#non-chinese-v2.8.3.2
+npm pack --pack-destination /private/tmp
+cp /private/tmp/tobilu-qmd-2.8.3.tgz /private/tmp/qmd-non-chinese-v2.8.3.2.tgz
+gh release create non-chinese-v2.8.3.2 /private/tmp/qmd-non-chinese-v2.8.3.2.tgz --title "QMD non-Chinese defaults v2.8.3.2" --notes-from-tag
+npm install -g https://github.com/sendhil/qmd/releases/download/non-chinese-v2.8.3.2/qmd-non-chinese-v2.8.3.2.tgz
 ```
 
-Do not reuse or move a published tag.
+Build and inspect the tarball before uploading it. Confirm the uploaded asset's
+digest, install it into an isolated prefix first, and only then replace the
+working global installation. Do not reuse or move a published tag.
 
 ## Rollback
 

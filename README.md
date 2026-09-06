@@ -32,25 +32,20 @@ Google EmbeddingGemma, an IBM Granite-based query expander, and a Jina reranker
 by default. A fresh installation does not download Qwen or another
 Chinese-developed model unless you explicitly override a model URI.
 
-Install the current GitHub branch directly while the replacement release is
-being prepared:
-
-```sh
-npm install -g github:sendhil/qmd#non-chinese-defaults
-```
-
 The immutable `non-chinese-v2.8.3.1` tag was published before a Git-install
-build dependency was fixed. Do not install or move that tag. After the
-replacement tag has been published, pin installations to it instead:
+build dependency was fixed. Do not install or move that tag. npm also has an
+[open bug](https://github.com/npm/cli/issues/8440) that breaks global installs
+of Git dependencies whose `prepare` script needs dependencies. Install the
+replacement GitHub release's prebuilt package asset instead:
 
 ```sh
-npm install -g github:sendhil/qmd#non-chinese-v2.8.3.2
+npm install -g https://github.com/sendhil/qmd/releases/download/non-chinese-v2.8.3.2/qmd-non-chinese-v2.8.3.2.tgz
 ```
 
-The `non-chinese-v2.8.3.2` replacement tag is planned; this README does not
-claim it has already been published. Embedding downloads EmbeddingGemma; the
-first deep query also downloads the expander and reranker. QMD stores these
-GGUF files in its normal local model cache, `~/.cache/qmd/models/`:
+The `non-chinese-v2.8.3.2` release replaces `.1`. Embedding downloads
+EmbeddingGemma; the first deep query also downloads the expander and reranker.
+QMD stores these GGUF files in its normal local model cache,
+`~/.cache/qmd/models/`:
 
 | Default | Role | Approximate download |
 |---------|------|----------------------|
@@ -89,14 +84,13 @@ later immutable releases exist, roll back by installing the preceding
 Install the fork first so `pi-memory` discovers this `qmd` executable:
 
 ```sh
-npm install -g github:sendhil/qmd#non-chinese-defaults
+npm install -g https://github.com/sendhil/qmd/releases/download/non-chinese-v2.8.3.2/qmd-non-chinese-v2.8.3.2.tgz
 pi install npm:pi-memory
 ```
 
-Once the planned immutable tag is published, use
-`github:sendhil/qmd#non-chinese-v2.8.3.2` in the first command. `pi-memory`
-creates its `pi-memory` collection automatically. If QMD was installed after
-Pi started, restart Pi or initialize manually:
+The release asset belongs to the immutable `non-chinese-v2.8.3.2` tag.
+`pi-memory` creates its `pi-memory` collection automatically. If QMD was
+installed after Pi started, restart Pi or initialize manually:
 
 ```sh
 qmd collection add ~/.pi/agent/memory --name pi-memory
@@ -111,8 +105,8 @@ or disable another memory extension that registers the same tool name.
 ## Quick Start
 
 ```sh
-# Install this fork from GitHub; pin the immutable tag after it is published
-npm install -g github:sendhil/qmd#non-chinese-defaults
+# Install the prebuilt asset from the immutable GitHub release
+npm install -g https://github.com/sendhil/qmd/releases/download/non-chinese-v2.8.3.2/qmd-non-chinese-v2.8.3.2.tgz
 
 # Create collections for your notes, docs, and meeting transcripts
 qmd collection add ~/notes --name notes

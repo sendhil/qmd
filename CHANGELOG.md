@@ -20,10 +20,11 @@
 
 ### Fixed
 
-- GitHub dependency installs now declare TypeScript directly for the `prepare`
-  build instead of relying on an optional peer supplied by another dependency.
-  The published `non-chinese-v2.8.3.1` tag remains immutable and should not be
-  installed; use the branch until a corrective tag is published.
+- Git checkout builds now declare TypeScript directly for `prepare` instead of
+  relying on an optional peer supplied by another dependency. Because npm has
+  a separate open bug preparing global Git dependencies, fork releases use a
+  prebuilt GitHub release asset. The published `non-chinese-v2.8.3.1` tag
+  remains immutable and should not be installed.
 
 ## [2.8.3] - 2026-08-16
 
