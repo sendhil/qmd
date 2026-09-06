@@ -6,16 +6,111 @@ const root = new URL("..", import.meta.url);
 const pkg = JSON.parse(readFileSync(new URL("package.json", root), "utf8"));
 
 describe("package test task", () => {
-  test("documents the canonical prebuilt fork release", () => {
+  test("recommends the exact canonical prebuilt fork install", () => {
+    const readme = readFileSync(new URL("README.md", root), "utf8");
+    const releaseUrl =
+      "https://github.com/sendhil/qmd/releases/download/v2.8.3-sendhil.1/qmd-v2.8.3-sendhil.1.tgz";
+
+    expect(readme).toContain(`npm install -g ${releaseUrl}`);
+    expect(readme).toContain(
+      "6dc3af845e97fdd9da37ec46b625da8156bf59156d36b880879b2f3bbc6d7dc9",
+    );
+  });
+
+  test("does not recommend historical release assets", () => {
     const readme = readFileSync(new URL("README.md", root), "utf8");
 
-    expect(readme).toContain("v2.8.3-sendhil.1");
-    expect(readme).toContain(
-      "https://github.com/sendhil/qmd/releases/download/v2.8.3-sendhil.1/qmd-v2.8.3-sendhil.1.tgz",
+    expect(readme).not.toMatch(
+      /npm install -g [^\n]*releases\/download\/non-chinese-v2\.8\.3\.[12]\//,
     );
-    expect(readme).not.toContain(
+  });
+
+  test("does not recommend common Git branch install forms", () => {
+    const readme = readFileSync(new URL("README.md", root), "utf8");
+
+    for (const command of [
       "npm install -g github:sendhil/qmd#non-chinese-defaults",
+      "npm install -g sendhil/qmd#non-chinese-defaults",
+      "npm install -g git+https://github.com/sendhil/qmd.git#non-chinese-defaults",
+      "npm install -g https://github.com/sendhil/qmd.git#non-chinese-defaults",
+    ]) {
+      expect(readme).not.toContain(command);
+    }
+  });
+
+  test("describes release immutability as fork policy rather than GitHub enforcement", () => {
+    const readme = readFileSync(new URL("README.md", root), "utf8");
+
+    expect(readme).toContain("GitHub's immutable-release setting is not enabled");
+    expect(readme).toContain("fork policy treats the tag and asset as immutable");
+    expect(readme).not.toContain("immutable GitHub release");
+  });
+
+  test("excludes fork release tags from the npm publish workflow", () => {
+    const publishWorkflow = readFileSync(
+      new URL(".github/workflows/publish.yml", root),
+      "utf8",
     );
+
+    expect(publishWorkflow).toContain(
+      'tags: ["v*", "!v*-sendhil.*"]',
+    );
+  });
+
+  test("validates the pulled release commit before the full release suite", () => {
+    const maintenance = readFileSync(
+      new URL("docs/UPSTREAM_MAINTENANCE.md", root),
+      "utf8",
+    );
+    const validationStart = maintenance.indexOf("## Validation");
+    const releaseStart = maintenance.indexOf("## Tag and install");
+    const rollbackStart = maintenance.indexOf("## Rollback");
+    const validationSection = maintenance.slice(validationStart, releaseStart);
+    const releaseSection = maintenance.slice(releaseStart, rollbackStart);
+
+    expect(validationStart).toBeGreaterThanOrEqual(0);
+    expect(releaseStart).toBeGreaterThan(validationStart);
+    expect(rollbackStart).toBeGreaterThan(releaseStart);
+    expect(validationSection).toContain(
+      "git pull --rebase origin non-chinese-defaults",
+    );
+    expect(validationSection.indexOf("git pull --rebase")).toBeLessThan(
+      validationSection.indexOf("npm test"),
+    );
+    expect(releaseSection).not.toContain("git pull --rebase");
+  });
+
+  test("derives reusable release values from the tag and package metadata", () => {
+    const maintenance = readFileSync(
+      new URL("docs/UPSTREAM_MAINTENANCE.md", root),
+      "utf8",
+    );
+    const releaseSection = maintenance.slice(
+      maintenance.indexOf("## Tag and install"),
+      maintenance.indexOf("## Rollback"),
+    );
+    const commandBlock = releaseSection.match(/```sh\n([\s\S]*?)\n```/)?.[1] ?? "";
+
+    expect(commandBlock.match(/v2\.8\.3-sendhil\.1/g)).toHaveLength(1);
+    expect(commandBlock).toMatch(
+      /PACKAGE_VERSION=\$\(node -p [^\n]*package\.json/,
+    );
+    expect(commandBlock).toMatch(
+      /PACKAGE_FILENAME=\$\(node -p [^\n]*package\.json/,
+    );
+    expect(commandBlock).toContain("RELEASE_ASSET=qmd-$RELEASE_TAG.tgz");
+    expect(commandBlock).toContain('RELEASE_TITLE="QMD $RELEASE_TAG"');
+    expect(commandBlock).toContain(
+      "RELEASE_URL=https://github.com/sendhil/qmd/releases/download/$RELEASE_TAG/$RELEASE_ASSET",
+    );
+    expect(commandBlock).toContain(
+      "RELEASE_DIR=/private/tmp/qmd-$RELEASE_TAG-release-$RELEASE_BUILD_COMMIT",
+    );
+    expect(commandBlock).toContain(
+      'mv "$RELEASE_DIR/$PACKAGE_FILENAME" "$RELEASE_PATH"',
+    );
+    expect(commandBlock).toContain('--title "$RELEASE_TITLE"');
+    expect(commandBlock).toContain('"$RELEASE_URL"');
   });
 
   test("declares TypeScript directly for Git prepare builds", () => {

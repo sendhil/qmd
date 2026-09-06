@@ -32,7 +32,7 @@ Google EmbeddingGemma, an IBM Granite-based query expander, and a Jina reranker
 by default. A fresh installation does not download Qwen or another
 Chinese-developed model unless you explicitly override a model URI.
 
-The immutable `non-chinese-v2.8.3.1` and `non-chinese-v2.8.3.2` tags are
+The `non-chinese-v2.8.3.1` and `non-chinese-v2.8.3.2` tags are policy-protected
 historical releases from the fork's old naming scheme. Never move or delete
 either tag; `.1` also predates a required Git-install build-dependency fix.
 npm has a separate [open bug](https://github.com/npm/cli/issues/8440) that
@@ -43,6 +43,12 @@ canonical prebuilt GitHub release asset instead:
 ```sh
 npm install -g https://github.com/sendhil/qmd/releases/download/v2.8.3-sendhil.1/qmd-v2.8.3-sendhil.1.tgz
 ```
+
+GitHub's immutable-release setting is not enabled for this repository. The
+fork policy treats the tag and asset as immutable: never move or reuse the tag,
+and never replace or delete the published asset. Verify downloaded bytes
+against the canonical asset's pinned SHA-256:
+`6dc3af845e97fdd9da37ec46b625da8156bf59156d36b880879b2f3bbc6d7dc9`.
 
 Fork releases use `v<upstream>-sendhil.<revision>`, with the revision reset to
 `1` for each new upstream baseline. `v2.8.3-sendhil.1` is the canonical release
@@ -79,8 +85,8 @@ command -v qmd || true
 ```
 
 This removes the package but does not delete model caches or indexes. After
-later immutable releases exist, roll back by installing the preceding verified
-`v<upstream>-sendhil.<revision>` release asset.
+later policy-protected releases exist, roll back by installing the preceding
+verified `v<upstream>-sendhil.<revision>` release asset.
 
 ### Pi memory
 
@@ -91,7 +97,7 @@ npm install -g https://github.com/sendhil/qmd/releases/download/v2.8.3-sendhil.1
 pi install npm:pi-memory
 ```
 
-The release asset belongs to the immutable `v2.8.3-sendhil.1` tag.
+The release asset belongs to the policy-protected `v2.8.3-sendhil.1` tag.
 `pi-memory` creates its `pi-memory` collection automatically. If QMD was
 installed after Pi started, restart Pi or initialize manually:
 
@@ -108,7 +114,7 @@ or disable another memory extension that registers the same tool name.
 ## Quick Start
 
 ```sh
-# Install the prebuilt asset from the immutable GitHub release
+# Install the verified asset from the policy-protected GitHub release
 npm install -g https://github.com/sendhil/qmd/releases/download/v2.8.3-sendhil.1/qmd-v2.8.3-sendhil.1.tgz
 
 # Create collections for your notes, docs, and meeting transcripts

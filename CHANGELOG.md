@@ -20,8 +20,8 @@
 - Fork releases now use `v<upstream>-sendhil.<revision>`, resetting the fork
   revision to `1` for each new upstream baseline. `v2.8.3-sendhil.1` is the
   canonical release for this baseline; `non-chinese-v2.8.3.1` and
-  `non-chinese-v2.8.3.2` remain immutable historical tags and must never be
-  moved or deleted.
+  `non-chinese-v2.8.3.2` remain policy-protected historical tags and must never
+  be moved or deleted.
 
 ### Fixed
 
@@ -30,6 +30,9 @@
   a separate open bug preparing global Git dependencies, fork releases use a
   prebuilt GitHub release asset rather than recommending the fork branch as a
   global Git dependency.
+- Fork tags matching `v*-sendhil.*` are excluded from the upstream npm publish
+  workflow so they cannot publish the upstream package or create a competing
+  GitHub release if Actions are enabled on the fork.
 
 ## [2.8.3] - 2026-08-16
 
