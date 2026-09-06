@@ -114,18 +114,28 @@ still makes `npm install -g github:...` unsuitable. Publish and test a prebuilt
 GitHub release asset instead:
 
 ```sh
+git status --short --branch
+mkdir -p /private/tmp/qmd-release-2.8.3.2 /private/tmp/qmd-release-local-test-2.8.3.2
+npm pack --pack-destination /private/tmp/qmd-release-2.8.3.2
+cp /private/tmp/qmd-release-2.8.3.2/tobilu-qmd-2.8.3.tgz /private/tmp/qmd-release-2.8.3.2/qmd-non-chinese-v2.8.3.2.tgz
+shasum -a 256 /private/tmp/qmd-release-2.8.3.2/qmd-non-chinese-v2.8.3.2.tgz
+npm install -g --prefix /private/tmp/qmd-release-local-test-2.8.3.2 /private/tmp/qmd-release-2.8.3.2/qmd-non-chinese-v2.8.3.2.tgz
+/private/tmp/qmd-release-local-test-2.8.3.2/bin/qmd --version
 git tag -a non-chinese-v2.8.3.2 -m "QMD 2.8.3 with approved model defaults and Git install fix"
 git push origin non-chinese-defaults
 git push origin non-chinese-v2.8.3.2
-npm pack --pack-destination /private/tmp
-cp /private/tmp/tobilu-qmd-2.8.3.tgz /private/tmp/qmd-non-chinese-v2.8.3.2.tgz
-gh release create non-chinese-v2.8.3.2 /private/tmp/qmd-non-chinese-v2.8.3.2.tgz --title "QMD non-Chinese defaults v2.8.3.2" --notes-from-tag
-npm install -g https://github.com/sendhil/qmd/releases/download/non-chinese-v2.8.3.2/qmd-non-chinese-v2.8.3.2.tgz
+gh release create non-chinese-v2.8.3.2 /private/tmp/qmd-release-2.8.3.2/qmd-non-chinese-v2.8.3.2.tgz --title "QMD non-Chinese defaults v2.8.3.2" --notes-from-tag
+mkdir -p /private/tmp/qmd-release-download-2.8.3.2 /private/tmp/qmd-release-url-test-2.8.3.2
+gh release download non-chinese-v2.8.3.2 --pattern qmd-non-chinese-v2.8.3.2.tgz --dir /private/tmp/qmd-release-download-2.8.3.2
+shasum -a 256 /private/tmp/qmd-release-2.8.3.2/qmd-non-chinese-v2.8.3.2.tgz /private/tmp/qmd-release-download-2.8.3.2/qmd-non-chinese-v2.8.3.2.tgz
+npm install -g --prefix /private/tmp/qmd-release-url-test-2.8.3.2 https://github.com/sendhil/qmd/releases/download/non-chinese-v2.8.3.2/qmd-non-chinese-v2.8.3.2.tgz
+/private/tmp/qmd-release-url-test-2.8.3.2/bin/qmd --version
 ```
 
-Build and inspect the tarball before uploading it. Confirm the uploaded asset's
-digest, install it into an isolated prefix first, and only then replace the
-working global installation. Do not reuse or move a published tag.
+Inspect the tarball contents as well as its digest before tagging. The two
+printed SHA-256 values must match, and both isolated installations must report
+the tagged commit. Only then optionally replace the working global installation
+with the README command. Do not reuse or move a published tag.
 
 ## Rollback
 
