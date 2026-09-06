@@ -8,7 +8,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll, vi } from "vitest";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, truncateSync, writeFileSync } from "fs";
 import { createHash } from "crypto";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -402,6 +402,98 @@ describe("pinned built-in model integrity", () => {
         expect.objectContaining({ model: customUri, path: customCachePath, refreshed: true }),
       ]);
       expect(existsSync(builtInCachePath)).toBe(true);
+    } finally {
+      fetchSpy.mockRestore();
+      setNodeLlamaCppModuleForTest(null);
+      rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps ETag metadata isolated for custom Hugging Face URIs with the same filename", async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), "qmd-model-custom-etag-"));
+    const firstUri = "hf:first-org/first-repo/shared-model.gguf";
+    const secondUri = "hf:second-org/second-repo/shared-model.gguf";
+    const firstPath = join(cacheDir, "hf_first-org_first-repo_shared-model.gguf");
+    const secondPath = join(cacheDir, "hf_second-org_second-repo_shared-model.gguf");
+    const paths = new Map([[firstUri, firstPath], [secondUri, secondPath]]);
+    const downloads: string[] = [];
+    const resolveModelFile = vi.fn(async (model: string, options?: { download?: false }) => {
+      const path = paths.get(model);
+      if (!path) throw new Error(`unexpected model ${model}`);
+      if (options?.download === false) return path;
+      if (!existsSync(path)) {
+        downloads.push(model);
+        writeFileSync(path, tinyGguf(model));
+      }
+      return path;
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      const etag = url.includes("first-org") ? "first-etag" : "second-etag";
+      return new Response(null, { status: 200, headers: { etag } });
+    });
+    setNodeLlamaCppModuleForTest({
+      LlamaLogLevel: { error: "error" },
+      resolveModelFile,
+      LlamaChatSession: vi.fn() as any,
+      getLlama: vi.fn(),
+    });
+
+    try {
+      await pullModels([firstUri], { cacheDir });
+      await pullModels([secondUri], { cacheDir });
+      expect(downloads).toEqual([firstUri, secondUri]);
+      const firstEtagPath = join(cacheDir, `hf-etag_${createHash("sha256").update(`${firstUri}#main`).digest("hex")}.etag`);
+      const secondEtagPath = join(cacheDir, `hf-etag_${createHash("sha256").update(`${secondUri}#main`).digest("hex")}.etag`);
+      expect(existsSync(firstEtagPath)).toBe(true);
+      expect(existsSync(secondEtagPath)).toBe(true);
+      expect(readFileSync(firstEtagPath, "utf-8")).toBe("first-etag\n");
+      expect(readFileSync(secondEtagPath, "utf-8")).toBe("second-etag\n");
+
+      await expect(pullModels([firstUri], { cacheDir })).resolves.toEqual([
+        expect.objectContaining({ model: firstUri, path: firstPath, refreshed: false }),
+      ]);
+      await expect(pullModels([secondUri], { cacheDir })).resolves.toEqual([
+        expect.objectContaining({ model: secondUri, path: secondPath, refreshed: false }),
+      ]);
+      expect(downloads).toEqual([firstUri, secondUri]);
+      expect(existsSync(firstPath)).toBe(true);
+      expect(existsSync(secondPath)).toBe(true);
+    } finally {
+      fetchSpy.mockRestore();
+      setNodeLlamaCppModuleForTest(null);
+      rmSync(cacheDir, { recursive: true, force: true });
+    }
+  });
+
+  test("treats a custom #main Hugging Face reference as mutable", async () => {
+    const cacheDir = mkdtempSync(join(tmpdir(), "qmd-model-custom-main-"));
+    const model = "hf:example/custom/shared-model.gguf#main";
+    const cachePath = join(cacheDir, "hf_example_custom_shared-model.gguf");
+    writeFileSync(cachePath, tinyGguf("old-main-cache"));
+    const resolveModelFile = vi.fn(async (_model: string, options?: { download?: false }) => {
+      if (options?.download === false) return cachePath;
+      writeFileSync(cachePath, tinyGguf("refreshed-main-cache"));
+      return cachePath;
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(null, { status: 200, headers: { etag: "main-etag" } }),
+    );
+    setNodeLlamaCppModuleForTest({
+      LlamaLogLevel: { error: "error" },
+      resolveModelFile,
+      LlamaChatSession: vi.fn() as any,
+      getLlama: vi.fn(),
+    });
+
+    try {
+      await expect(pullModels([model], { cacheDir })).resolves.toEqual([
+        expect.objectContaining({ model, path: cachePath, refreshed: true }),
+      ]);
+      expect(fetchSpy).toHaveBeenCalledWith(
+        "https://huggingface.co/example/custom/resolve/main/shared-model.gguf",
+        { method: "HEAD" },
+      );
     } finally {
       fetchSpy.mockRestore();
       setNodeLlamaCppModuleForTest(null);

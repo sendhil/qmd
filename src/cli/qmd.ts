@@ -86,7 +86,7 @@ import {
   type ReindexResult,
   type ChunkStrategy,
 } from "../store.js";
-import { disposeDefaultLlamaCpp, getDefaultLlamaCpp, setDefaultLlamaCpp, LlamaCpp, withLLMSession, pullModels, DEFAULT_MODEL_CACHE_DIR, resolveEmbedModel, resolveGenerateModel, resolveRerankModel, resolveModels, getBuiltinModelSpec, findCachedHfModelPath, inspectCachedBuiltinModel, inspectGgufFile, isDarwinMetalMitigationActive, type BuiltinModelRole, type PullModelRequest } from "../llm.js";
+import { disposeDefaultLlamaCpp, getDefaultLlamaCpp, setDefaultLlamaCpp, LlamaCpp, withLLMSession, pullModels, DEFAULT_MODEL_CACHE_DIR, resolveEmbedModel, resolveGenerateModel, resolveRerankModel, resolveModels, getBuiltinModelSpec, findCachedHfModelPath, findCachedUrlModelPath, inspectCachedBuiltinModel, inspectGgufFile, isDarwinMetalMitigationActive, type BuiltinModelRole, type PullModelRequest } from "../llm.js";
 import {
   formatSearchResults,
   formatDocuments,
@@ -3791,6 +3791,15 @@ async function findCachedModelInspection(
     // `#revision` URIs. Filename substring scans can mistake a sibling pinned
     // artifact (or an `.etag` sidecar) for this explicit custom override.
     const candidate = await findCachedHfModelPath(model, DEFAULT_MODEL_CACHE_DIR);
+    if (!candidate) return { path: null, invalid };
+    const inspection = inspectGgufFile(candidate);
+    if (inspection.valid) return { path: candidate, invalid };
+    invalid.push(`${formatModelDiagnosticPath(candidate)}: ${inspection.details}`);
+    return { path: null, invalid };
+  }
+
+  if (/^https?:\/\//i.test(model)) {
+    const candidate = await findCachedUrlModelPath(model, DEFAULT_MODEL_CACHE_DIR);
     if (!candidate) return { path: null, invalid };
     const inspection = inspectGgufFile(candidate);
     if (inspection.valid) return { path: candidate, invalid };

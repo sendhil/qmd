@@ -415,6 +415,10 @@ type HfRef = {
   revision?: string;
 };
 
+function isImmutableHfRevision(revision: string | undefined): boolean {
+  return Boolean(revision && /^[0-9a-f]{40}$/i.test(revision));
+}
+
 function parseHfUri(model: string): HfRef | null {
   if (!model.startsWith("hf:")) return null;
   const without = model.slice(3);
@@ -652,6 +656,20 @@ function getUrlCacheFileName(modelUri: string): string | null {
   }
 }
 
+/**
+ * Mutable Hugging Face models need freshness metadata that is as specific as
+ * their cache entry. A basename sidecar lets two unrelated repositories with
+ * `model.gguf` overwrite each other's ETag and force unnecessary refreshes.
+ */
+function getHfEtagFileName(modelUri: string): string | null {
+  const ref = parseHfUri(modelUri);
+  if (!ref || isImmutableHfRevision(ref.revision)) return null;
+  // node-llama-cpp treats an omitted revision and `#main` as one cache
+  // identity. Keep their freshness metadata aligned as well.
+  const cacheIdentity = `hf:${ref.repo}/${ref.file}#${ref.revision ?? "main"}`;
+  return `hf-etag_${createHash("sha256").update(cacheIdentity).digest("hex")}.etag`;
+}
+
 function resolveModelFileArgs(
   cacheDir: string,
   cli = false,
@@ -687,7 +705,7 @@ export async function findCachedHfModelPath(
 }
 
 /** Locate a stable URL cache entry without relying on its remote basename. */
-async function findCachedUrlModelPath(
+export async function findCachedUrlModelPath(
   modelUri: string,
   cacheDir: string,
 ): Promise<string | null> {
@@ -825,7 +843,7 @@ export async function pullModels(
     const cached = customCachePath ? [customCachePath] : [];
 
     if (hfRef && filename) {
-      if (hfRef.revision) {
+      if (isImmutableHfRevision(hfRef.revision)) {
         // An explicit revision has an exact node-llama-cpp cache identity.
         // Do not run mutable ETag freshness logic or delete sibling revisions.
         if (options.refresh && hfCachePath) {
@@ -833,9 +851,10 @@ export async function pullModels(
           refreshed = true;
         }
       } else {
-        const etagPath = join(cacheDir, `${filename}.etag`);
+        const etagFileName = getHfEtagFileName(model);
+        const etagPath = etagFileName ? join(cacheDir, etagFileName) : null;
         const remoteEtag = await getRemoteEtag(hfRef);
-        const localEtag = existsSync(etagPath)
+        const localEtag = etagPath && existsSync(etagPath)
           ? readFileSync(etagPath, "utf-8").trim()
           : null;
         const shouldRefresh =
@@ -845,7 +864,7 @@ export async function pullModels(
           for (const candidate of cached) {
             if (existsSync(candidate)) unlinkSync(candidate);
           }
-          if (existsSync(etagPath)) unlinkSync(etagPath);
+          if (etagPath && existsSync(etagPath)) unlinkSync(etagPath);
           refreshed = cached.length > 0;
         }
       }
@@ -856,11 +875,13 @@ export async function pullModels(
 
     const path = await resolveAndValidateModelFile(model, cacheDir, options.cli === true, role);
     const sizeBytes = existsSync(path) ? statSync(path).size : 0;
-    if (hfRef && filename && !hfRef.revision) {
+    if (hfRef && filename && !isImmutableHfRevision(hfRef.revision)) {
       const remoteEtag = await getRemoteEtag(hfRef);
       if (remoteEtag) {
-        const etagPath = join(cacheDir, `${filename}.etag`);
-        writeFileSync(etagPath, remoteEtag + "\n", "utf-8");
+        const etagFileName = getHfEtagFileName(model);
+        if (etagFileName) {
+          writeFileSync(join(cacheDir, etagFileName), remoteEtag + "\n", "utf-8");
+        }
       }
     }
     results.push({ model, path, sizeBytes, refreshed });

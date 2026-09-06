@@ -12,6 +12,7 @@ import { tmpdir } from "os";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { spawn } from "child_process";
+import { createHash } from "crypto";
 import { setTimeout as sleep } from "timers/promises";
 import YAML from "yaml";
 import { buildEditorUri, termLink, resolveEmbedModelForCli, buildPullModelRequests } from "../src/cli/qmd.ts";
@@ -803,6 +804,30 @@ describe("CLI Status Command", () => {
     expect(stdout).toContain("invalid 1");
     expect(stdout).toContain("HTML page, not a GGUF model");
     expect(stdout).toContain("qmd pull --refresh");
+  }, 20000);
+
+  test("qmd doctor recognizes the URL-specific cache target for an HTTPS override", async () => {
+    const env = await createIsolatedTestEnv("doctor-url-model-cache");
+    const model = "https://models.example.invalid/releases/custom.gguf";
+    await writeFile(join(env.configDir, "index.yml"), `collections: {}\nmodels:\n  embed: ${model}\n  generate: ${model}\n  rerank: ${model}\n`);
+    const cacheRoot = join(env.configDir, "cache");
+    const modelCacheDir = join(cacheRoot, "qmd", "models");
+    await mkdir(modelCacheDir, { recursive: true });
+    const cacheName = `url_${createHash("sha256").update(model).digest("hex")}.gguf`;
+    await writeFile(join(modelCacheDir, cacheName), Buffer.concat([Buffer.from("GGUF"), Buffer.alloc(60)]));
+
+    const { stdout, exitCode } = await runQmd(["doctor"], {
+      dbPath: env.dbPath,
+      configDir: env.configDir,
+      env: {
+        XDG_CACHE_HOME: cacheRoot,
+        QMD_DOCTOR_DEVICE_PROBE: "0",
+      },
+    });
+    expect(exitCode).toBe(0);
+    expect(stdout).toContain("model cache");
+    expect(stdout).toContain("1 active model is downloaded and valid GGUF");
+    expect(stdout).not.toContain(`missing 1/1: embedding+generation+reranking: ${model}`);
   }, 20000);
 
   test("qmd doctor finds the revision-specific built-in cache rather than a floating main cache", async () => {
