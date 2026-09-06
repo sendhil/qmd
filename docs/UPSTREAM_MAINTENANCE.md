@@ -105,37 +105,92 @@ not approved unless this real-model gate passes with the proposed URI.
 
 ## Tag and install
 
-Use a tag composed from the current upstream version and fork revision. The
-published `non-chinese-v2.8.3.1` tag cannot complete npm's Git-dependency
-`prepare` build because TypeScript was not a direct development dependency.
-It is immutable: never move or recommend it. TypeScript is now explicit, but
-npm's open [global Git-dependency prepare bug](https://github.com/npm/cli/issues/8440)
-still makes `npm install -g github:...` unsuitable. Publish and test a prebuilt
-GitHub release asset instead:
+Name fork releases `v<upstream>-sendhil.<revision>`, resetting the revision to
+`1` for each new upstream baseline. For example, the canonical first release
+from upstream 2.8.3 is `v2.8.3-sendhil.1`, and the first release after adopting
+upstream 2.8.4 will be `v2.8.4-sendhil.1`.
+
+The published `non-chinese-v2.8.3.1` and `non-chinese-v2.8.3.2` tags are
+immutable historical tags from the old naming scheme: never move or delete
+them. The `.1` tag also predates the direct TypeScript build dependency.
+TypeScript is now explicit, but npm's open [global Git-dependency prepare
+bug](https://github.com/npm/cli/issues/8440) still makes a global Git-dependency
+install from `non-chinese-defaults` unsuitable. Publish and test a prebuilt
+GitHub release asset instead.
+
+Run the following only after all validation passes and the release commit has
+been committed, rebased, and pushed. The sequence builds once, validates those
+exact local bytes before tagging, uploads without rebuilding, then validates
+the downloaded release and its public URL:
 
 ```sh
+set -eu
+
+RELEASE_TAG=v2.8.3-sendhil.1
+RELEASE_ASSET=qmd-v2.8.3-sendhil.1.tgz
+
 git status --short --branch
-mkdir -p /private/tmp/qmd-release-2.8.3.2 /private/tmp/qmd-release-local-test-2.8.3.2
-npm pack --pack-destination /private/tmp/qmd-release-2.8.3.2
-cp /private/tmp/qmd-release-2.8.3.2/tobilu-qmd-2.8.3.tgz /private/tmp/qmd-release-2.8.3.2/qmd-non-chinese-v2.8.3.2.tgz
-shasum -a 256 /private/tmp/qmd-release-2.8.3.2/qmd-non-chinese-v2.8.3.2.tgz
-npm install -g --prefix /private/tmp/qmd-release-local-test-2.8.3.2 /private/tmp/qmd-release-2.8.3.2/qmd-non-chinese-v2.8.3.2.tgz
-/private/tmp/qmd-release-local-test-2.8.3.2/bin/qmd --version
-git tag -a non-chinese-v2.8.3.2 -m "QMD 2.8.3 with approved model defaults and Git install fix"
+test "$(git branch --show-current)" = non-chinese-defaults
+test -z "$(git status --porcelain)"
+git pull --rebase origin non-chinese-defaults
 git push origin non-chinese-defaults
-git push origin non-chinese-v2.8.3.2
-gh release create non-chinese-v2.8.3.2 /private/tmp/qmd-release-2.8.3.2/qmd-non-chinese-v2.8.3.2.tgz --title "QMD non-Chinese defaults v2.8.3.2" --notes-from-tag
-mkdir -p /private/tmp/qmd-release-download-2.8.3.2 /private/tmp/qmd-release-url-test-2.8.3.2
-gh release download non-chinese-v2.8.3.2 --pattern qmd-non-chinese-v2.8.3.2.tgz --dir /private/tmp/qmd-release-download-2.8.3.2
-shasum -a 256 /private/tmp/qmd-release-2.8.3.2/qmd-non-chinese-v2.8.3.2.tgz /private/tmp/qmd-release-download-2.8.3.2/qmd-non-chinese-v2.8.3.2.tgz
-npm install -g --prefix /private/tmp/qmd-release-url-test-2.8.3.2 https://github.com/sendhil/qmd/releases/download/non-chinese-v2.8.3.2/qmd-non-chinese-v2.8.3.2.tgz
-/private/tmp/qmd-release-url-test-2.8.3.2/bin/qmd --version
+
+RELEASE_BUILD_COMMIT=$(git rev-parse --short=7 HEAD)
+RELEASE_DIR=/private/tmp/qmd-v2.8.3-sendhil.1-release-$RELEASE_BUILD_COMMIT
+LOCAL_PREFIX=/private/tmp/qmd-v2.8.3-sendhil.1-local-$RELEASE_BUILD_COMMIT
+DOWNLOAD_DIR=/private/tmp/qmd-v2.8.3-sendhil.1-download-$RELEASE_BUILD_COMMIT
+URL_PREFIX=/private/tmp/qmd-v2.8.3-sendhil.1-url-$RELEASE_BUILD_COMMIT
+RELEASE_PATH=$RELEASE_DIR/$RELEASE_ASSET
+
+# Prove the canonical tag is unused locally and remotely before mutation.
+test -z "$(git tag --list "$RELEASE_TAG")"
+REMOTE_TAG=$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG")
+test -z "$REMOTE_TAG"
+
+# Build exactly once; pack without lifecycle scripts so these bytes are not rebuilt.
+mkdir "$RELEASE_DIR"
+npm run build
+npm pack --ignore-scripts --pack-destination "$RELEASE_DIR"
+mv "$RELEASE_DIR/tobilu-qmd-2.8.3.tgz" "$RELEASE_PATH"
+
+# Inspect the archive and its build stamp, then record its lowercase SHA-256.
+tar -tzf "$RELEASE_PATH"
+tar -xOf "$RELEASE_PATH" package/dist/cli/build-info.json
+PACKED_BUILD_COMMIT=$(tar -xOf "$RELEASE_PATH" package/dist/cli/build-info.json | jq -r .commit)
+test "$PACKED_BUILD_COMMIT" = "$RELEASE_BUILD_COMMIT"
+RELEASE_SHA256=$(shasum -a 256 "$RELEASE_PATH" | awk '{print $1}')
+test "${#RELEASE_SHA256}" -eq 64
+printf '%s  %s\n' "$RELEASE_SHA256" "$RELEASE_PATH"
+
+# Validate the exact local artifact before creating the immutable tag.
+npm install -g --prefix "$LOCAL_PREFIX" "$RELEASE_PATH"
+test "$("$LOCAL_PREFIX/bin/qmd" --version)" = "qmd 2.8.3 ($RELEASE_BUILD_COMMIT)"
+git tag -a "$RELEASE_TAG" -m "QMD $RELEASE_TAG"
+test "$(git rev-list -n 1 "$RELEASE_TAG")" = "$(git rev-parse HEAD)"
+
+# The upstream-oriented hook treats every v* tag as an npm package-version tag;
+# the explicit gates above replace that inapplicable check for this fork tag.
+git push --no-verify origin "$RELEASE_TAG"
+gh release create "$RELEASE_TAG" "$RELEASE_PATH" --repo sendhil/qmd --title "QMD v2.8.3-sendhil.1" --latest=false --notes "Canonical prebuilt sendhil/qmd fork release. Supersedes the historical non-chinese-v2.8.3.x naming."
+
+# Download and compare the published bytes before testing the public URL.
+mkdir "$DOWNLOAD_DIR"
+gh release download "$RELEASE_TAG" --repo sendhil/qmd --pattern "$RELEASE_ASSET" --dir "$DOWNLOAD_DIR"
+DOWNLOADED_PATH=$DOWNLOAD_DIR/$RELEASE_ASSET
+DOWNLOADED_SHA256=$(shasum -a 256 "$DOWNLOADED_PATH" | awk '{print $1}')
+test "$DOWNLOADED_SHA256" = "$RELEASE_SHA256"
+cmp "$RELEASE_PATH" "$DOWNLOADED_PATH"
+
+npm install -g --prefix "$URL_PREFIX" https://github.com/sendhil/qmd/releases/download/v2.8.3-sendhil.1/qmd-v2.8.3-sendhil.1.tgz
+test "$("$URL_PREFIX/bin/qmd" --version)" = "qmd 2.8.3 ($RELEASE_BUILD_COMMIT)"
 ```
 
-Inspect the tarball contents as well as its digest before tagging. The two
-printed SHA-256 values must match, and both isolated installations must report
-the tagged commit. Only then optionally replace the working global installation
-with the README command. Do not reuse or move a published tag.
+If any check fails before `git tag`, stop without creating or pushing the tag.
+If anything fails after the tag is pushed, report it and repair the release
+without moving or deleting the tag. Never rebuild between the first local
+artifact validation and upload. Only after the downloaded SHA-256 and both
+isolated installations agree may the README command replace a working global
+installation. Never reuse or move a published tag.
 
 ## Rollback
 
@@ -150,4 +205,5 @@ command -v qmd || true
 The expected result is that `qmd` is no longer found. Do not delete model
 caches or indexes. Never use defective `non-chinese-v2.8.3.1` as a rollback
 target. For later releases, roll back by installing the preceding verified,
-immutable `non-chinese-v*` tag. Never reset or force-push the shared branch.
+immutable `v<upstream>-sendhil.<revision>` release asset. Never reset or
+force-push the shared branch.

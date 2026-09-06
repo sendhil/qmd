@@ -17,14 +17,19 @@
 - `qmd context add` now honors a single `-c/--collection` selector for
   collection-relative paths, restoring `pi-memory`'s automatic `/daily` and
   collection-root context setup while preserving unscoped `/` as global.
+- Fork releases now use `v<upstream>-sendhil.<revision>`, resetting the fork
+  revision to `1` for each new upstream baseline. `v2.8.3-sendhil.1` is the
+  canonical release for this baseline; `non-chinese-v2.8.3.1` and
+  `non-chinese-v2.8.3.2` remain immutable historical tags and must never be
+  moved or deleted.
 
 ### Fixed
 
 - Git checkout builds now declare TypeScript directly for `prepare` instead of
   relying on an optional peer supplied by another dependency. Because npm has
   a separate open bug preparing global Git dependencies, fork releases use a
-  prebuilt GitHub release asset. The published `non-chinese-v2.8.3.1` tag
-  remains immutable and should not be installed.
+  prebuilt GitHub release asset rather than recommending the fork branch as a
+  global Git dependency.
 
 ## [2.8.3] - 2026-08-16
 

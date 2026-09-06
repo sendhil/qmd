@@ -6,6 +6,18 @@ const root = new URL("..", import.meta.url);
 const pkg = JSON.parse(readFileSync(new URL("package.json", root), "utf8"));
 
 describe("package test task", () => {
+  test("documents the canonical prebuilt fork release", () => {
+    const readme = readFileSync(new URL("README.md", root), "utf8");
+
+    expect(readme).toContain("v2.8.3-sendhil.1");
+    expect(readme).toContain(
+      "https://github.com/sendhil/qmd/releases/download/v2.8.3-sendhil.1/qmd-v2.8.3-sendhil.1.tgz",
+    );
+    expect(readme).not.toContain(
+      "npm install -g github:sendhil/qmd#non-chinese-defaults",
+    );
+  });
+
   test("declares TypeScript directly for Git prepare builds", () => {
     expect(pkg.scripts.prepare).toContain("scripts/build.mjs");
     expect(pkg.devDependencies?.typescript).toBe("5.9.3");

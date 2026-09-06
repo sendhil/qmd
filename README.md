@@ -32,20 +32,23 @@ Google EmbeddingGemma, an IBM Granite-based query expander, and a Jina reranker
 by default. A fresh installation does not download Qwen or another
 Chinese-developed model unless you explicitly override a model URI.
 
-The immutable `non-chinese-v2.8.3.1` tag was published before a Git-install
-build dependency was fixed. Do not install or move that tag. npm also has an
-[open bug](https://github.com/npm/cli/issues/8440) that breaks global installs
-of Git dependencies whose `prepare` script needs dependencies. Install the
-replacement GitHub release's prebuilt package asset instead:
+The immutable `non-chinese-v2.8.3.1` and `non-chinese-v2.8.3.2` tags are
+historical releases from the fork's old naming scheme. Never move or delete
+either tag; `.1` also predates a required Git-install build-dependency fix.
+npm has a separate [open bug](https://github.com/npm/cli/issues/8440) that
+breaks global installs of Git dependencies whose `prepare` script needs
+dependencies, so do not use the branch as a global Git dependency. Install the
+canonical prebuilt GitHub release asset instead:
 
 ```sh
-npm install -g https://github.com/sendhil/qmd/releases/download/non-chinese-v2.8.3.2/qmd-non-chinese-v2.8.3.2.tgz
+npm install -g https://github.com/sendhil/qmd/releases/download/v2.8.3-sendhil.1/qmd-v2.8.3-sendhil.1.tgz
 ```
 
-The `non-chinese-v2.8.3.2` release replaces `.1`. Embedding downloads
-EmbeddingGemma; the first deep query also downloads the expander and reranker.
-QMD stores these GGUF files in its normal local model cache,
-`~/.cache/qmd/models/`:
+Fork releases use `v<upstream>-sendhil.<revision>`, with the revision reset to
+`1` for each new upstream baseline. `v2.8.3-sendhil.1` is the canonical release
+for this baseline. Embedding downloads EmbeddingGemma; the first deep query
+also downloads the expander and reranker. QMD stores these GGUF files in its
+normal local model cache, `~/.cache/qmd/models/`:
 
 | Default | Role | Approximate download |
 |---------|------|----------------------|
@@ -76,19 +79,19 @@ command -v qmd || true
 ```
 
 This removes the package but does not delete model caches or indexes. After
-later immutable releases exist, roll back by installing the preceding
-`non-chinese-v*` tag.
+later immutable releases exist, roll back by installing the preceding verified
+`v<upstream>-sendhil.<revision>` release asset.
 
 ### Pi memory
 
 Install the fork first so `pi-memory` discovers this `qmd` executable:
 
 ```sh
-npm install -g https://github.com/sendhil/qmd/releases/download/non-chinese-v2.8.3.2/qmd-non-chinese-v2.8.3.2.tgz
+npm install -g https://github.com/sendhil/qmd/releases/download/v2.8.3-sendhil.1/qmd-v2.8.3-sendhil.1.tgz
 pi install npm:pi-memory
 ```
 
-The release asset belongs to the immutable `non-chinese-v2.8.3.2` tag.
+The release asset belongs to the immutable `v2.8.3-sendhil.1` tag.
 `pi-memory` creates its `pi-memory` collection automatically. If QMD was
 installed after Pi started, restart Pi or initialize manually:
 
@@ -106,7 +109,7 @@ or disable another memory extension that registers the same tool name.
 
 ```sh
 # Install the prebuilt asset from the immutable GitHub release
-npm install -g https://github.com/sendhil/qmd/releases/download/non-chinese-v2.8.3.2/qmd-non-chinese-v2.8.3.2.tgz
+npm install -g https://github.com/sendhil/qmd/releases/download/v2.8.3-sendhil.1/qmd-v2.8.3-sendhil.1.tgz
 
 # Create collections for your notes, docs, and meeting transcripts
 qmd collection add ~/notes --name notes
